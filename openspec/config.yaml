@@ -1,32 +1,98 @@
 schema: spec-driven
 
-# Project context (optional)
-# Add only constraints that should guide OpenSpec artifacts and workflows.
-# Include constraints an agent cannot infer by reading the code.
-# Keep general project documentation and discoverable codebase facts out.
-# Example:
-#   context: |
-#     Designs and tasks must cover Windows, macOS, and Linux
-#     Write all artifacts in Spanish
+# Princípios do projeto (equivalente à "constitution" do Spec Kit).
+# Só o que não se deduz lendo o código: decisões, restrições e preferências.
+# Fatos do código ficam no README e no próprio código.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always state what is out of scope
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+context: |
+  Idioma
+  - Artefatos do OpenSpec, comentários, mensagens da API, textos da demo e
+    mensagens de commit em português do Brasil. Identificadores de código em
+    inglês.
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+  Ecossistema
+  - A Maria é o agente de IA do Observatório. Repositórios irmãos em
+    ../: observatorio-fomento (módulo de fomento, primeira fonte de dados),
+    observatorio-front (frontend que vai consumir esta API),
+    observatorio-idp (autenticação, ainda em desenvolvimento) e Simcc.
+  - Bancos de outros sistemas são SOMENTE LEITURA para a Maria: nunca criar,
+    alterar ou remover tabelas, views, roles, comentários ou dados neles,
+    nem para testes. Defasagem e erros são simulados no banco da própria
+    Maria ou numa origem SQLite temporária.
+  - Enquanto o observatorio-idp não estiver pronto, endpoints novos nascem
+    sem autenticação; o design registra isso como risco.
+
+  Decisões de arquitetura
+  - Não adicionar serviços de infraestrutura sem necessidade clara: o que a
+    Maria precisa guardar vai no banco dela (SQLite em dev). Ferramentas de
+    observabilidade e afins devem ser open source e sem assinatura.
+  - Configuração editável por pessoas vive no banco e é exposta pela API
+    (o frontend vai editá-la). Arquivos YAML são seed, nunca fonte de
+    verdade: o seed cria só o que falta e não sobrescreve edições.
+  - Dados técnicos (vindos de sistemas de origem) e editoriais (vindos de
+    pessoas) ficam em campos separados; processos automáticos só tocam os
+    técnicos. Itens novos detectados automaticamente entram ocultos.
+  - Modelos de linguagem: níveis internos (fast/medium/advanced),
+    independentes de provedor; o cliente nunca escolhe nem vê o modelo.
+  - Toda funcionalidade voltada a usuário ganha representação na página
+    /demo, sem expor detalhes internos (modelos, níveis, listas de rotas).
+
+  Segurança e privacidade
+  - Credenciais e URLs de conexão nunca são guardadas no banco nem
+    devolvidas pela API: guarda-se o nome da variável de ambiente. Mensagens
+    de erro nunca repetem URLs de conexão.
+  - Dados pessoais (LGPD): preferir acesso só por agregação e permitir
+    ocultar conteúdo em traces e logs. A classificação final de cada dado é
+    decisão do usuário, não do agente.
+  - Significados de regra de negócio (ex.: descrição de valores de enum) não
+    são inventados: ficam pendentes para quem conhece o domínio.
+
+rules:
+  proposal:
+    - Ter a seção "Fora do escopo" ao final de What Changes.
+    - No Impact, dizer se a mudança toca bancos externos, segredos ou
+      endpoints sem autenticação.
+    - Quando a mudança depende de outra ainda não arquivada, dizer qual.
+  specs:
+    - Requisitos com no máximo 500 caracteres (openspec validate --strict);
+      dividir em vários requisitos em vez de acumular regras num só.
+    - Todo requisito com pelo menos um cenário testável (WHEN/THEN).
+    - Ao estender uma capacidade ainda não arquivada, usar só ADDED.
+  design:
+    - Toda decisão traz a alternativa descartada e o motivo.
+    - Riscos no formato "[Risco] → Mitigação".
+    - Com migração de banco, incluir Migration Plan com rollback
+      (alembic downgrade) e o efeito sobre dados existentes.
+  tasks:
+    - Cada grupo entrega os próprios testes e documentação; nada de grupo
+      final só de testes.
+    - Mudanças com interface incluem uma task de verificação no navegador
+      (desktop e celular a 375px).
+    - Incluir a atualização do README (e do .env.example quando houver
+      configuração nova) na task que introduz a funcionalidade.
+
+operations:
+  apply:
+    guidance:
+      - Quando o pedido do usuário inclui implementar, seguir do propose
+        direto para o apply, avisando que o fez.
+      - Antes de marcar uma task, rodar os testes dela; ao final, task test
+        (lint, testes e cobertura) sem falhas.
+      - Testes nunca chamam LLMs reais (fakes do LangChain) e usam banco de
+        origem real em arquivo temporário quando testam integração com
+        bancos externos.
+      - Migrações Alembic geradas por autogenerate, revisadas, com nome de
+        arquivo em ASCII, server_default portável entre SQLite e PostgreSQL
+        (sa.false(), não '0') e testadas com upgrade, downgrade e upgrade.
+      - Verificar a funcionalidade contra o sistema real (por exemplo, o banco do
+        fomento) e na demo; desfazer no fim qualquer dado de teste editado.
+  archive:
+    guidance:
+      - Arquivar em ordem de dependência entre mudanças.
+      - 'Commits no padrão do histórico, cada um terminando com a linha
+        Co-Authored-By. Primeiro "docs(openspec): planeja ...", depois
+        "feat: ..." com corpo em tópicos e a linha "Implementa
+        openspec/changes/<nome>.", e por fim "docs(openspec): arquiva <nome>"
+        dizendo quais specs principais foram criadas ou atualizadas.'
+      - Se duas mudanças editaram os mesmos arquivos, um único feat pode
+        implementar ambas, citando as duas.
