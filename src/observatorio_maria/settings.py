@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = 'sqlite+aiosqlite:///./observatorio.db'
     ENVIRONMENT: str = 'development'
+    DEMO_ENABLED: bool = True
 
     # Modelos por nível no formato "provedor:modelo" (init_chat_model).
     # Os *_KWARGS são repassados ao construtor do modelo (JSON no .env).

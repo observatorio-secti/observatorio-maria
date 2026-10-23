@@ -34,14 +34,14 @@ API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa na Bah
 │       ├── models.py           # Tabelas: Conversation e Message
 │       ├── schemas.py          # Schemas Pydantic (conversas, mensagens, blocos)
 │       ├── llm/
-│       │   ├── registry.py     # ModelTier, ModelRegistry e get_model_registry
+│       │   ├── registry.py     # ModelTier, ModelRegistry e get_model_registry (uso interno)
 │       │   └── prompts.py      # Prompt de sistema da Maria
 │       ├── services/
 │       │   └── chat.py         # ChatService: contexto, chamada ao modelo e persistência
+│       ├── demo/               # Página de demonstração montada em /demo
 │       └── routers/
 │           ├── health.py       # /health
-│           ├── conversations.py# /conversations e /conversations/{id}/messages
-│           └── models.py       # /models
+│           └── conversations.py# /conversations e /conversations/{id}/messages
 └── tests/
     ├── conftest.py             # Banco em memória, AsyncClient e modelos fake do LangChain
     ├── test_app.py
@@ -73,10 +73,12 @@ cp .env.example .env
 |---|---|---|
 | `DATABASE_URL` | URL com **driver assíncrono** | `sqlite+aiosqlite:///./observatorio.db` |
 | `OPENAI_API_KEY` | Credencial lida pelo SDK da OpenAI | — |
-| `LLM_FAST_MODEL` / `LLM_MEDIUM_MODEL` / `LLM_ADVANCED_MODEL` | Modelo de cada nível, no formato `provedor:modelo` | `openai:gpt-6-luna` |
+| `LLM_FAST_MODEL` / `LLM_MEDIUM_MODEL` / `LLM_ADVANCED_MODEL` | Modelo de cada nível interno, no formato `provedor:modelo` | `openai:gpt-6-luna` |
 | `LLM_*_MODEL_KWARGS` | Parâmetros extras do modelo, em JSON | `{"reasoning_effort": "low"}` |
 
 Para PostgreSQL use `postgresql+psycopg://usuario:senha@localhost:5432/observatorio`.
+
+Os níveis `fast`, `medium` e `advanced` são **internos**: a aplicação decide qual usar (hoje o chat usa `medium`, definido em `services/chat.py`). Eles não aparecem na API e não podem ser escolhidos por clientes. O modelo e o nível de cada resposta ficam gravados no banco, para auditoria.
 
 Para trocar o modelo ou o provedor de um nível, basta mudar a variável e reiniciar. Por exemplo, `LLM_ADVANCED_MODEL="anthropic:<modelo>"`, instalando o pacote do provedor (`langchain-anthropic`).
 
@@ -99,20 +101,28 @@ alembic revision --autogenerate -m "descrição"
 | Método | Rota | Descrição |
 |---|---|---|
 | GET | `/health` | Verifica a API e o banco |
-| GET | `/models` | Lista os níveis de modelo (`fast`, `medium`, `advanced`) |
 | POST | `/conversations` | Cria uma conversa (`title` opcional) |
 | GET | `/conversations?offset=0&limit=20` | Lista conversas, da atualizada mais recentemente para a mais antiga |
 | GET | `/conversations/{id}` | Detalha uma conversa |
 | PATCH | `/conversations/{id}` | Renomeia uma conversa |
 | DELETE | `/conversations/{id}` | Exclui a conversa e suas mensagens |
 | GET | `/conversations/{id}/messages` | Histórico em ordem cronológica |
-| POST | `/conversations/{id}/messages` | Envia `{"content": "...", "model": "medium"}` e retorna `{user_message, assistant_message}` |
+| POST | `/conversations/{id}/messages` | Envia `{"content": "..."}` e retorna `{user_message, assistant_message}`. Campos extras são rejeitados com 422 |
 
 Erros relacionados ao LLM:
 - `502`: o modelo falhou; nada é gravado na conversa.
 - `503`: os modelos não puderam ser configurados, por exemplo por falta de credencial.
 
 A documentação interativa fica em `/docs`.
+
+### 🎬 Demo
+
+Com a API rodando (`task run`), acesse **http://localhost:8000/demo/**. A página consome os endpoints reais e mostra:
+
+- **Chat**: digitar e enviar logo ao abrir (a conversa é criada automaticamente), indicador enquanto a Maria responde, renomear e excluir conversas, título automático e o tratamento dos erros 502 e 503.
+- **Contrato de blocos**: uma resposta de exemplo com blocos `text`, `chart` (Chart.js) e `table`, mais um tipo desconhecido ignorado, ao lado do JSON correspondente.
+
+O chat precisa de `OPENAI_API_KEY` configurada; sem ela, a página explica o 503. A demo é montada como arquivos estáticos e pode ser desligada com `DEMO_ENABLED=false`.
 
 ### Contrato de conteúdo (blocos tipados)
 

@@ -1,7 +1,9 @@
 from http import HTTPStatus
 from uuid import uuid4
 
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from sqlalchemy import select
 
 from observatorio_maria.app import app
 from observatorio_maria.llm.prompts import MARIA_SYSTEM_PROMPT
@@ -11,6 +13,8 @@ from observatorio_maria.llm.registry import (
     RegisteredModel,
     get_model_registry,
 )
+from observatorio_maria.models import Message, MessageRole
+from observatorio_maria.services.chat import CHAT_MODEL_TIER
 from tests.conftest import FailingChatModel
 
 
@@ -32,30 +36,38 @@ async def test_send_message_returns_exchange(client, conversation):
     assert assistant['content'] == [
         {'type': 'text', 'text': 'Resposta do modelo medium'}
     ]
-    assert assistant['model_tier'] == 'medium'
-    assert assistant['model_name'] == 'fake:medium'
+    assert 'model_tier' not in assistant
+    assert 'model_name' not in assistant
 
 
-async def test_send_message_uses_requested_tiers(client, conversation):
+async def test_send_message_uses_internal_tier(client, conversation, session):
+    await client.post(messages_url(conversation), json={'content': 'Oi'})
+
+    stored = await session.scalar(
+        select(Message).where(Message.role == MessageRole.ASSISTANT)
+    )
+    assert stored.model_tier == CHAT_MODEL_TIER
+    assert stored.model_name == f'fake:{CHAT_MODEL_TIER}'
+
+
+@pytest.mark.parametrize('model', ['fast', 'ultra'])
+async def test_send_message_rejects_model_choice(client, conversation, model):
     url = messages_url(conversation)
 
-    fast = await client.post(url, json={'content': 'Oi', 'model': 'fast'})
-    advanced = await client.post(
-        url, json={'content': 'E agora?', 'model': 'advanced'}
-    )
-
-    assert fast.json()['assistant_message']['model_tier'] == 'fast'
-    assert advanced.json()['assistant_message']['content'] == [
-        {'type': 'text', 'text': 'Resposta do modelo advanced'}
-    ]
-
-
-async def test_send_message_rejects_unknown_tier(client, conversation):
-    response = await client.post(
-        messages_url(conversation), json={'content': 'Oi', 'model': 'ultra'}
-    )
+    response = await client.post(url, json={'content': 'Oi', 'model': model})
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert (await client.get(url)).json()['messages'] == []
+
+
+async def test_openapi_hides_model_details(client):
+    schemas = (await client.get('/openapi.json')).json()['components'][
+        'schemas'
+    ]
+
+    assert 'model' not in schemas['MessageCreate']['properties']
+    assert 'model_tier' not in schemas['MessagePublic']['properties']
+    assert 'model_name' not in schemas['MessagePublic']['properties']
 
 
 async def test_send_message_rejects_empty_content(client, conversation):

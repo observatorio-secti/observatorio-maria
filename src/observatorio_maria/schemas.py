@@ -4,7 +4,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from observatorio_maria.llm.registry import ModelTier
 from observatorio_maria.models import MessageRole
 
 
@@ -105,8 +104,11 @@ ContentBlock = Annotated[
 
 
 class MessageCreate(BaseModel):
+    # Só o texto: o modelo usado é decisão interna e não pode ser escolhido
+    # pelo cliente, por isso campos extras são rejeitados.
+    model_config = ConfigDict(extra='forbid')
+
     content: str = Field(min_length=1, max_length=10_000)
-    model: ModelTier = ModelTier.MEDIUM
 
 
 class MessagePublic(BaseModel):
@@ -116,8 +118,6 @@ class MessagePublic(BaseModel):
     conversation_id: UUID
     role: MessageRole
     content: list[ContentBlock]
-    model_tier: ModelTier | None
-    model_name: str | None
     created_at: datetime
 
 
@@ -128,15 +128,3 @@ class MessageList(BaseModel):
 class ChatExchange(BaseModel):
     user_message: MessagePublic
     assistant_message: MessagePublic
-
-
-# --- Modelos -----------------------------------------------------------------
-
-
-class ModelPublic(BaseModel):
-    tier: ModelTier
-    model_name: str
-
-
-class ModelList(BaseModel):
-    models: list[ModelPublic]

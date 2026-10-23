@@ -27,6 +27,10 @@ from observatorio_maria.schemas import TextBlock
 
 AUTO_TITLE_MAX_LENGTH = 60
 
+# Nível usado nas respostas do chat. Decisão interna: não é exposta nem
+# configurável por clientes da API.
+CHAT_MODEL_TIER = ModelTier.MEDIUM
+
 
 class ModelInvocationError(Exception):
     """O modelo de linguagem falhou ao gerar a resposta."""
@@ -73,9 +77,9 @@ class ChatService:
         self.registry = registry
 
     async def send_message(
-        self, conversation: Conversation, content: str, tier: ModelTier
+        self, conversation: Conversation, content: str
     ) -> tuple[Message, Message]:
-        registered = self.registry.get(tier)
+        registered = self.registry.get(CHAT_MODEL_TIER)
         history = await get_history(self.session, conversation)
 
         user_message = Message(
@@ -98,7 +102,7 @@ class ChatService:
             conversation_id=conversation.id,
             role=MessageRole.ASSISTANT,
             content=[TextBlock(text=response.text).model_dump()],
-            model_tier=tier,
+            model_tier=registered.tier,
             model_name=registered.name,
         )
         # Só persiste depois que o modelo respondeu: em caso de falha a

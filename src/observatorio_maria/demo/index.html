@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maria · Demo</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">M</span>
+        <div>
+          <h1>Maria</h1>
+          <p>Demo da API · Observatório Maria</p>
+        </div>
+      </div>
+      <div class="status" aria-live="polite">
+        <span class="pill" id="status-api">API…</span>
+        <a class="pill link" href="../docs" target="_blank">/docs ↗</a>
+      </div>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button role="tab" class="tab active" data-tab="chat">Chat</button>
+      <button role="tab" class="tab" data-tab="blocks">Contrato de blocos</button>
+    </nav>
+
+    <main>
+      <!-- Chat: gestão de conversas + mensagens -->
+      <section class="panel active" id="tab-chat">
+        <div class="chat-layout">
+          <aside class="sidebar">
+            <button class="primary" id="new-conversation">+ Nova conversa</button>
+            <ul id="conversation-list" class="conversation-list"></ul>
+            <p class="muted small" id="conversation-total"></p>
+          </aside>
+
+          <div class="chat">
+            <div class="chat-header">
+              <h2 id="chat-title">Selecione ou crie uma conversa</h2>
+              <div class="chat-actions" id="chat-actions" hidden>
+                <button class="ghost" id="rename-conversation">Renomear</button>
+                <button class="ghost danger" id="delete-conversation">Excluir</button>
+              </div>
+            </div>
+
+            <div class="messages" id="messages">
+              <div class="empty">
+                <p>Escreva sua pergunta abaixo para começar. A conversa é criada e salva automaticamente.</p>
+              </div>
+            </div>
+
+            <div class="banner" id="banner" hidden></div>
+
+            <form class="composer" id="composer">
+              <textarea
+                id="content"
+                rows="2"
+                maxlength="10000"
+                placeholder="Pergunte algo sobre pesquisa na Bahia…"
+                aria-label="Mensagem"
+              ></textarea>
+              <button class="primary" type="submit" id="send">Enviar</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- Contrato de blocos: exemplo renderizado + JSON -->
+      <section class="panel" id="tab-blocks">
+        <p class="lead">
+          O <code>content</code> de cada mensagem é uma lista de blocos discriminados por
+          <code>type</code>. O frontend renderiza por tipo e ignora tipos desconhecidos.
+          Abaixo, uma resposta de exemplo com os três tipos do contrato e um tipo futuro.
+        </p>
+        <div class="blocks-layout">
+          <div class="card">
+            <h3>Renderizado</h3>
+            <div class="message assistant" id="sample-rendered"></div>
+          </div>
+          <div class="card">
+            <h3>JSON recebido</h3>
+            <pre id="sample-json"></pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

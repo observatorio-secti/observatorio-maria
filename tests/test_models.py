@@ -13,17 +13,10 @@ from observatorio_maria.llm.registry import (
 from observatorio_maria.settings import Settings
 
 
-async def test_list_models(client):
+async def test_models_endpoint_does_not_exist(client):
     response = await client.get('/models')
 
-    assert response.status_code == HTTPStatus.OK
-    assert response.json() == {
-        'models': [
-            {'tier': 'fast', 'model_name': 'fake:fast'},
-            {'tier': 'medium', 'model_name': 'fake:medium'},
-            {'tier': 'advanced', 'model_name': 'fake:advanced'},
-        ]
-    }
+    assert response.status_code == HTTPStatus.NOT_FOUND
 
 
 def test_build_model_registry_uses_settings(monkeypatch):
@@ -58,7 +51,9 @@ def test_registry_requires_all_tiers():
         ModelRegistry([])
 
 
-async def test_misconfigured_models_return_503(client, monkeypatch):
+async def test_misconfigured_models_return_503(
+    client, conversation, monkeypatch
+):
     def broken_build(settings):
         raise RuntimeError('OPENAI_API_KEY ausente')
 
@@ -66,7 +61,9 @@ async def test_misconfigured_models_return_503(client, monkeypatch):
     registry_module.get_model_registry.cache_clear()
     app.dependency_overrides.pop(get_model_registry)
 
-    response = await client.get('/models')
+    response = await client.post(
+        f'/conversations/{conversation["id"]}/messages', json={'content': 'Oi'}
+    )
 
     assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
     assert 'OPENAI_API_KEY ausente' in response.json()['detail']

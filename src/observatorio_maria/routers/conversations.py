@@ -108,7 +108,7 @@ async def send_message(
 ):
     try:
         user_message, assistant_message = await chat.send_message(
-            conversation, data.content, data.model
+            conversation, data.content
         )
     except ModelInvocationError as exc:
         raise HTTPException(
