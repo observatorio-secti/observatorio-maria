@@ -6,22 +6,54 @@ const $ = (id) => document.getElementById(id);
 
 // --- HTTP --------------------------------------------------------------------
 
+async function apiError(response) {
+  const body = await response.json().catch(() => ({}));
+  const detail = Array.isArray(body.detail)
+    ? body.detail.map((d) => d.msg).join('; ')
+    : body.detail || response.statusText;
+  const error = new Error(detail);
+  error.status = response.status;
+  return error;
+}
+
 async function api(path, options = {}) {
   const response = await fetch(new URL(path, API_ROOT), {
     headers: { 'Content-Type': 'application/json' },
     ...options,
   });
   if (response.status === 204) return null;
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = Array.isArray(body.detail)
-      ? body.detail.map((d) => d.msg).join('; ')
-      : body.detail || response.statusText;
-    const error = new Error(detail);
-    error.status = response.status;
-    throw error;
+  if (!response.ok) throw await apiError(response);
+  return response.json();
+}
+
+// Lê uma resposta Server-Sent Events de um POST (EventSource só faz GET).
+async function* streamEvents(path, payload) {
+  const response = await fetch(new URL(path, API_ROOT), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw await apiError(response);
+
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    const frames = buffer.split(/\r?\n\r?\n/);
+    buffer = frames.pop();
+    for (const frame of frames) {
+      let event = 'message';
+      const data = [];
+      for (const line of frame.split(/\r?\n/)) {
+        if (line.startsWith(':')) continue; // comentário (keep-alive)
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
+      }
+      if (data.length) yield { event, data: JSON.parse(data.join('\n')) };
+    }
   }
-  return body;
 }
 
 // --- Renderização de blocos (o mesmo código serve ao chat e ao exemplo) -------
@@ -255,31 +287,57 @@ async function sendMessage(event) {
   container.append(optimistic, typing);
   container.scrollTop = container.scrollHeight;
 
+  let userNode = optimistic;
+  let partial = null; // balão com o texto em geração
+  let text = '';
   try {
     // Sem conversa selecionada, a primeira mensagem cria uma nova.
     if (!state.current) {
       state.current = await api('conversations', { method: 'POST', body: '{}' });
       showCurrentHeader();
     }
-    const exchange = await api(`conversations/${state.current.id}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ content }),
-    });
-    optimistic.replaceWith(renderMessage(exchange.user_message));
-    container.append(renderMessage(exchange.assistant_message));
+    for await (const { event, data } of streamEvents(`conversations/${state.current.id}/messages/stream`, {
+      content,
+    })) {
+      if (event === 'message.user') {
+        const node = renderMessage(data, { pending: true });
+        userNode.replaceWith(node);
+        userNode = node;
+      } else if (event === 'content.delta') {
+        if (!partial) {
+          partial = el('div', { class: 'message assistant' });
+          typing.replaceWith(partial);
+        }
+        text += data.text;
+        partial.replaceChildren(renderBlocks([{ type: 'text', text }]));
+        container.scrollTop = container.scrollHeight;
+      } else if (event === 'message.assistant') {
+        // Versão persistida substitui o texto parcial; a pergunta também foi gravada.
+        userNode.classList.remove('pending');
+        (partial ?? typing).replaceWith(renderMessage(data));
+        partial = null;
+      } else if (event === 'error') {
+        const error = new Error(data.detail);
+        error.status = 'stream';
+        throw error;
+      }
+    }
     $('content').value = '';
     state.current = await api(`conversations/${state.current.id}`);
     showCurrentHeader();
     await loadConversations();
   } catch (error) {
-    optimistic.remove();
+    // Nada foi gravado: remove a pergunta e o texto parcial.
+    userNode.remove();
+    partial?.remove();
     const hint =
       error.status === 503
         ? ' Configure OPENAI_API_KEY no .env e reinicie a API.'
-        : error.status === 502
+        : error.status === 'stream'
           ? ' Nada foi gravado na conversa; tente novamente.'
           : '';
-    showBanner(`Erro ${error.status ?? ''}: ${error.message}.${hint}`);
+    const status = typeof error.status === 'number' ? ` ${error.status}` : '';
+    showBanner(`Erro${status}: ${error.message}.${hint}`);
   } finally {
     typing.remove();
     state.sending = false;

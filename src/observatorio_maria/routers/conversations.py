@@ -1,8 +1,10 @@
+from collections.abc import AsyncIterable
 from http import HTTPStatus
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,17 +12,24 @@ from observatorio_maria.database import get_session
 from observatorio_maria.models import Conversation
 from observatorio_maria.schemas import (
     ChatExchange,
+    ContentDeltaPublic,
     ConversationCreate,
     ConversationList,
     ConversationPublic,
     ConversationUpdate,
     MessageCreate,
     MessageList,
+    MessagePublic,
     Pagination,
+    StreamError,
 )
 from observatorio_maria.services.chat import (
+    AssistantMessageCompleted,
+    ChatEvent,
     ChatService,
+    ContentDelta,
     ModelInvocationError,
+    UserMessageCreated,
     get_chat_service,
     get_history,
 )
@@ -119,3 +128,48 @@ async def send_message(
         'user_message': user_message,
         'assistant_message': assistant_message,
     }
+
+
+def to_server_sent_event(event: ChatEvent) -> ServerSentEvent:
+    match event:
+        case UserMessageCreated(message=message):
+            return ServerSentEvent(
+                event='message.user',
+                data=MessagePublic.model_validate(message),
+            )
+        case ContentDelta(index=index, text=text):
+            return ServerSentEvent(
+                event='content.delta',
+                data=ContentDeltaPublic(index=index, text=text),
+            )
+        case AssistantMessageCompleted(message=message):
+            return ServerSentEvent(
+                event='message.assistant',
+                data=MessagePublic.model_validate(message),
+            )
+
+
+@router.post(
+    '/{conversation_id}/messages/stream',
+    response_class=EventSourceResponse,
+    summary='Envia uma mensagem e recebe a resposta em streaming (SSE)',
+    description=(
+        'Eventos, nesta ordem: `message.user` (MessagePublic), '
+        '`content.delta` (ContentDeltaPublic, zero ou mais) e '
+        '`message.assistant` (MessagePublic persistida). Falhas do modelo '
+        'após o início do stream chegam como `error` (StreamError).'
+    ),
+)
+async def stream_message(
+    data: MessageCreate, conversation: CurrentConversation, chat: Chat
+) -> AsyncIterable[ServerSentEvent]:
+    try:
+        async for event in chat.stream_message(conversation, data.content):
+            yield to_server_sent_event(event)
+    except ModelInvocationError as exc:
+        yield ServerSentEvent(
+            event='error',
+            data=StreamError(
+                detail=f'Falha ao gerar resposta do modelo: {exc}'
+            ),
+        )

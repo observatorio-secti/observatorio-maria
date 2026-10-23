@@ -3,14 +3,8 @@
 import logging
 from itertools import repeat
 
-import pytest
 from fastapi import FastAPI
-from langchain_core.language_models.fake_chat_models import (
-    GenericFakeChatModel,
-)
 from langchain_core.messages import AIMessage
-from openinference.instrumentation import OITracer, TraceConfig
-from openinference.instrumentation.langchain import LangChainInstrumentor
 from openinference.semconv.trace import SpanAttributes
 from opentelemetry.sdk._logs import (
     LoggerProvider,
@@ -19,13 +13,6 @@ from opentelemetry.sdk._logs import (
 from opentelemetry.sdk._logs.export import (
     InMemoryLogRecordExporter,
     SimpleLogRecordProcessor,
-)
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import InMemoryMetricReader
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-    InMemorySpanExporter,
 )
 from opentelemetry.trace import StatusCode
 
@@ -37,13 +24,14 @@ from observatorio_maria.llm.registry import (
     RegisteredModel,
     get_model_registry,
 )
-from observatorio_maria.observability.genai import (
-    GenAIMetricsHandler,
-    get_llm_callbacks,
-    get_tracer,
-)
 from observatorio_maria.observability.telemetry import setup_telemetry
-from tests.conftest import FailingChatModel
+from tests.conftest import (
+    FailingChatModel,
+    UsageReportingFakeChatModel,
+    chat_and_llm_spans,
+    finished,
+    metric_points,
+)
 
 USAGE = {'input_tokens': 12, 'output_tokens': 5, 'total_tokens': 17}
 
@@ -55,69 +43,9 @@ def registry_with(model):
 
 
 def answering_model():
-    return GenericFakeChatModel(
-        messages=repeat(AIMessage('Resposta', usage_metadata=USAGE))
+    return UsageReportingFakeChatModel(
+        messages=repeat(AIMessage('Resposta')), usage=USAGE
     )
-
-
-@pytest.fixture
-def hidden_content(monkeypatch):
-    # Definido antes de `spans`: a configuração é lida ao instrumentar.
-    monkeypatch.setenv('OPENINFERENCE_HIDE_INPUTS', 'true')
-    monkeypatch.setenv('OPENINFERENCE_HIDE_OUTPUTS', 'true')
-
-
-@pytest.fixture
-def spans(monkeypatch):
-    """Instrumenta o LangChain e o ChatService com exportador em memória."""
-    monkeypatch.setenv('OTEL_SDK_DISABLED', 'false')
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    instrumentor = LangChainInstrumentor()
-    instrumentor.instrument(tracer_provider=provider)
-    app.dependency_overrides[get_tracer] = lambda: OITracer(
-        provider.get_tracer('test'), config=TraceConfig()
-    )
-    yield exporter
-    instrumentor.uninstrument()
-
-
-@pytest.fixture
-def metric_reader(monkeypatch):
-    monkeypatch.setenv('OTEL_SDK_DISABLED', 'false')
-    reader = InMemoryMetricReader()
-    handler = GenAIMetricsHandler(
-        MeterProvider(metric_readers=[reader]).get_meter('test')
-    )
-    app.dependency_overrides[get_llm_callbacks] = lambda: [handler]
-    return reader
-
-
-def finished(exporter, name):
-    return [s for s in exporter.get_finished_spans() if s.name == name]
-
-
-def chat_and_llm_spans(exporter):
-    (chat,) = finished(exporter, 'maria.chat')
-    llm = [
-        s
-        for s in exporter.get_finished_spans()
-        if s.attributes.get(SpanAttributes.OPENINFERENCE_SPAN_KIND) == 'LLM'
-    ]
-    return chat, llm
-
-
-def metric_points(reader, name):
-    data = reader.get_metrics_data()
-    return [
-        point
-        for resource in data.resource_metrics
-        for scope in resource.scope_metrics
-        for metric in scope.metrics
-        if metric.name == name
-        for point in metric.data.data_points
-    ]
 
 
 async def send(client, conversation, content='Oi'):

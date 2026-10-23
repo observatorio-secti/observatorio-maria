@@ -128,3 +128,20 @@ class MessageList(BaseModel):
 class ChatExchange(BaseModel):
     user_message: MessagePublic
     assistant_message: MessagePublic
+
+
+# --- Streaming (Server-Sent Events) ------------------------------------------
+
+
+class ContentDeltaPublic(BaseModel):
+    """Evento `content.delta`: fragmento do bloco `index` da resposta."""
+
+    index: int
+    type: Literal['text'] = 'text'
+    text: str
+
+
+class StreamError(BaseModel):
+    """Evento `error`: falha depois de iniciado o stream."""
+
+    detail: str
