@@ -1,117 +1,157 @@
 # Observatório Maria - API FastAPI
 
-Estrutura inicial de uma aplicação FastAPI baseada nas boas práticas do curso **FastAPI do Zero** (Dunossauro), configurada como um **Mínimo Produto Viável (MVP)** profissional e modular, pronta para expansão.
+API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa na Bahia. A aplicação segue as boas práticas do curso **FastAPI do Zero** (Dunossauro): é assíncrona, modular e independente do provedor de LLM.
 
 ---
 
 ## 🚀 Tecnologias Utilizadas
 
 - **[Python](https://www.python.org/)** >= 3.12
-- **[FastAPI](https://fastapi.tiangolo.com/)**: Framework web assíncrono e de alta performance.
-- **[Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)**: Gerenciamento robusto de configurações e variáveis de ambiente.
-- **[SQLAlchemy 2.0](https://www.sqlalchemy.org/)**: Conexão com banco de dados e injeção de dependência via sessões (`get_session`).
-- **[Pytest](https://docs.pytest.org/) & [Coverage](https://coverage.readthedocs.io/)**: Testes automatizados com fixtures e cobertura de código.
-- **[Ruff](https://docs.astral.sh/ruff/)**: Linter e formatador de código ultrarrápido configurado no estilo da aula 01/13.
-- **[Taskipy](https://github.com/illBeRoy/taskipy)**: Automação de tarefas de desenvolvimento (CLI shortcuts).
+- **[FastAPI](https://fastapi.tiangolo.com/)**: framework web assíncrono.
+- **[LangChain](https://python.langchain.com/)**: orquestração dos modelos de linguagem (`init_chat_model`, independente de provedor).
+- **[Pydantic Settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/)**: configurações e variáveis de ambiente.
+- **[SQLAlchemy 2.0 (async)](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html)**: acesso assíncrono ao banco via `AsyncSession` (`get_session`).
+- **[Alembic](https://alembic.sqlalchemy.org/)**: versionamento do esquema do banco (template async).
+- **[Pytest](https://docs.pytest.org/) + [pytest-asyncio](https://pytest-asyncio.readthedocs.io/) & [Coverage](https://coverage.readthedocs.io/)**: testes assíncronos com cobertura.
+- **[Ruff](https://docs.astral.sh/ruff/)**: linter e formatador.
+- **[Taskipy](https://github.com/illBeRoy/taskipy)**: atalhos de tarefas.
 
 ---
 
 ## 📁 Estrutura de Diretórios
 
-O projeto adota o **`src-layout`**, que isola o pacote da raiz do projeto, prevenindo importações acidentais e garantindo que os testes usem a versão instalada/empacotada:
-
 ```text
 .
-├── pyproject.toml              # Configuração do projeto, dependências, ruff, pytest e taskipy
-├── README.md                   # Documentação da aplicação
-├── .env                        # Variáveis de ambiente locais
-├── .env.example                # Exemplo das variáveis de ambiente necessárias
-├── .gitignore                  # Arquivos e diretórios ignorados pelo Git
+├── pyproject.toml
+├── alembic.ini                 # Configuração do Alembic (URL vem do Settings)
+├── migrations/                 # Migrações do banco (Alembic async)
+├── openspec/                   # Planejamento (propostas, specs, design e tasks)
 ├── src/
-│   └── observatorio_maria/     # Pacote principal da aplicação
-│       ├── __init__.py         # Metadados do pacote (versão)
-│       ├── app.py              # Instância do FastAPI e rotas raiz
-│       ├── database.py         # Engine do SQLAlchemy e gerador de sessões (get_session)
-│       ├── settings.py         # Configurações validadas pelo Pydantic Settings
-│       ├── schemas.py          # Schemas Pydantic (Message, HealthCheck, etc.)
-│       └── routers/            # Módulos de rotas da aplicação
-│           ├── __init__.py
-│           └── health.py       # Endpoint de verificação de integridade e banco de dados
-└── tests/                      # Suíte de testes automatizados com pytest
-    ├── __init__.py
-    ├── conftest.py             # Fixtures globais (client, session em memória)
-    ├── test_app.py             # Testes das rotas da aplicação
-    └── test_db.py              # Testes de conexão e integridade do banco de dados
+│   └── observatorio_maria/
+│       ├── app.py              # Instância do FastAPI, routers e handlers de erro
+│       ├── database.py         # Engine async e gerador de sessões (get_session)
+│       ├── settings.py         # Configurações (banco e modelos por nível)
+│       ├── models.py           # Tabelas: Conversation e Message
+│       ├── schemas.py          # Schemas Pydantic (conversas, mensagens, blocos)
+│       ├── llm/
+│       │   ├── registry.py     # ModelTier, ModelRegistry e get_model_registry
+│       │   └── prompts.py      # Prompt de sistema da Maria
+│       ├── services/
+│       │   └── chat.py         # ChatService: contexto, chamada ao modelo e persistência
+│       └── routers/
+│           ├── health.py       # /health
+│           ├── conversations.py# /conversations e /conversations/{id}/messages
+│           └── models.py       # /models
+└── tests/
+    ├── conftest.py             # Banco em memória, AsyncClient e modelos fake do LangChain
+    ├── test_app.py
+    ├── test_db.py
+    ├── test_conversations.py
+    ├── test_messages.py
+    └── test_models.py
 ```
+
+As rotas são finas e delegam ao `ChatService`. O serviço depende apenas de `AsyncSession` e do `ModelRegistry`, ambos injetados via `Depends`, e conhece só a interface `BaseChatModel` do LangChain, nunca um provedor específico.
 
 ---
 
-## ⚙️ Configuração do Ambiente com Poetry
+## ⚙️ Configuração do Ambiente
 
-O gerenciamento de dependências e ambientes virtuais é padronizado com o **Poetry**.
-
-### 1. Instalação das Dependências
-
-Para instalar as dependências de produção e desenvolvimento no ambiente virtual local:
+### 1. Dependências
 
 ```bash
-# Configura o Poetry para criar o .venv dentro da pasta do projeto (caso ainda não esteja configurado)
-poetry config virtualenvs.in-project true --local
-
-# Instala todas as dependências e o pacote em modo editável
 poetry install
 ```
 
-### 2. Ativação do Ambiente Virtual (Opcional)
+### 2. Variáveis de ambiente
 
-Você pode ativar a virtualenv ou executar comandos prefixando com `poetry run`:
-
-```bash
-# Entrar no shell do ambiente virtual
-poetry shell
-# ou:
-source .venv/bin/activate
-```
-
-### 3. Configurar Variáveis de Ambiente
-
-Copie o `.env.example` para `.env`:
 ```bash
 cp .env.example .env
 ```
 
-Por padrão, a aplicação utiliza SQLite local:
-`DATABASE_URL="sqlite:///./observatorio.db"`
+| Variável | Descrição | Padrão |
+|---|---|---|
+| `DATABASE_URL` | URL com **driver assíncrono** | `sqlite+aiosqlite:///./observatorio.db` |
+| `OPENAI_API_KEY` | Credencial lida pelo SDK da OpenAI | — |
+| `LLM_FAST_MODEL` / `LLM_MEDIUM_MODEL` / `LLM_ADVANCED_MODEL` | Modelo de cada nível, no formato `provedor:modelo` | `openai:gpt-6-luna` |
+| `LLM_*_MODEL_KWARGS` | Parâmetros extras do modelo, em JSON | `{"reasoning_effort": "low"}` |
 
-Caso queira usar PostgreSQL, basta alterar no `.env`:
-`DATABASE_URL="postgresql+psycopg://usuario:senha@localhost:5432/observatorio"`
+Para PostgreSQL use `postgresql+psycopg://usuario:senha@localhost:5432/observatorio`.
+
+Para trocar o modelo ou o provedor de um nível, basta mudar a variável e reiniciar. Por exemplo, `LLM_ADVANCED_MODEL="anthropic:<modelo>"`, instalando o pacote do provedor (`langchain-anthropic`).
+
+### 3. Banco de dados
+
+```bash
+alembic upgrade head
+```
+
+Após alterar `models.py`, gere uma nova migração:
+
+```bash
+alembic revision --autogenerate -m "descrição"
+```
+
+---
+
+## 🌐 Endpoints
+
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/health` | Verifica a API e o banco |
+| GET | `/models` | Lista os níveis de modelo (`fast`, `medium`, `advanced`) |
+| POST | `/conversations` | Cria uma conversa (`title` opcional) |
+| GET | `/conversations?offset=0&limit=20` | Lista conversas, da atualizada mais recentemente para a mais antiga |
+| GET | `/conversations/{id}` | Detalha uma conversa |
+| PATCH | `/conversations/{id}` | Renomeia uma conversa |
+| DELETE | `/conversations/{id}` | Exclui a conversa e suas mensagens |
+| GET | `/conversations/{id}/messages` | Histórico em ordem cronológica |
+| POST | `/conversations/{id}/messages` | Envia `{"content": "...", "model": "medium"}` e retorna `{user_message, assistant_message}` |
+
+Erros relacionados ao LLM:
+- `502`: o modelo falhou; nada é gravado na conversa.
+- `503`: os modelos não puderam ser configurados, por exemplo por falta de credencial.
+
+A documentação interativa fica em `/docs`.
+
+### Contrato de conteúdo (blocos tipados)
+
+O `content` de toda mensagem é uma **lista de blocos** discriminados por `type`. O frontend renderiza cada bloco conforme o tipo e **deve ignorar tipos desconhecidos**. Assim, novos tipos podem surgir sem quebrar clientes antigos.
+
+```json
+[
+  {"type": "text", "text": "Em 2024 houve aumento nas bolsas:"},
+  {"type": "chart", "chart_type": "bar", "title": "Bolsas por ano",
+   "x": {"key": "ano", "label": "Ano", "type": "category"},
+   "series": [{"key": "bolsas", "label": "Bolsas", "unit": "un"}],
+   "data": [{"ano": "2023", "bolsas": 120}, {"ano": "2024", "bolsas": 150}]},
+  {"type": "table", "title": "Detalhe",
+   "columns": [{"key": "ano", "label": "Ano"}, {"key": "bolsas", "label": "Bolsas", "type": "number"}],
+   "rows": [{"ano": "2023", "bolsas": 120}]}
+]
+```
+
+Hoje a Maria produz apenas blocos `text`. Os blocos `chart` e `table` já fazem parte do contrato (veja o OpenAPI), então o frontend pode ser preparado desde já.
 
 ---
 
 ## 🛠️ Comandos Automatizados (Taskipy)
 
-Graças ao Taskipy configurado no `pyproject.toml`, você pode executar tarefas rotineiras com comandos simplificados:
-
 | Comando | Descrição | Comando subjacente |
 |---|---|---|
-| `task run` | Inicia o servidor de desenvolvimento com reload | `fastapi dev src/observatorio_maria/app.py` |
-| `task test` | Executa a suíte de testes com cobertura | `pytest -s -x --cov=observatorio_maria -vv` |
-| `task lint` | Verifica a formatação e boas práticas | `ruff check . && ruff check . --diff` |
-| `task format` | Corrige e formata o código automaticamente | `ruff check . --fix && ruff format .` |
-| `task post_test`| Gera relatório HTML de cobertura de código | `coverage html` |
-
-> *Nota: Você também pode rodar diretamente com `poetry run task test` ou através do ambiente virtual ativo.*
+| `task run` | Servidor de desenvolvimento com reload | `fastapi dev src/observatorio_maria/app.py` |
+| `task test` | Lint + testes com cobertura | `pytest -s -x --cov=observatorio_maria -vv` |
+| `task lint` | Verifica estilo e boas práticas | `ruff check . && ruff check . --diff` |
+| `task format` | Corrige e formata o código | `ruff check . --fix && ruff format .` |
 
 ---
 
 ## 🧪 Testes Automatizados
 
-O setup de testes conta com:
-- **Banco de dados isolado em memória** (`sqlite:///:memory:` via `StaticPool`), garantindo que nenhum teste afete o banco real.
-- **Injeção de dependência mockada** no `conftest.py` com `app.dependency_overrides[get_session]`.
-- **TestClient** do FastAPI com suporte a endpoints síncronos e assíncronos.
+- **Assíncronos**: `pytest-asyncio` (`asyncio_mode = auto`) e `httpx.AsyncClient` com `ASGITransport`.
+- **Banco isolado em memória**: `sqlite+aiosqlite:///:memory:` com `StaticPool`, recriado a cada teste.
+- **Sem chamadas a LLMs reais**: o `ModelRegistry` é substituído via `app.dependency_overrides` por `GenericFakeChatModel` do LangChain. Um callback de gravação (`RecordingHandler`) captura as mensagens enviadas ao modelo, e o `FailingChatModel` simula falhas do provedor.
 
-Para rodar os testes:
 ```bash
-pytest
+task test
 ```

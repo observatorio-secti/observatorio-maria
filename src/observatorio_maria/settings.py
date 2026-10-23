@@ -1,4 +1,9 @@
+from typing import Any
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_MODEL = 'openai:gpt-6-luna'
+DEFAULT_MODEL_KWARGS = {'reasoning_effort': 'low'}
 
 
 class Settings(BaseSettings):
@@ -8,5 +13,14 @@ class Settings(BaseSettings):
         extra='ignore',
     )
 
-    DATABASE_URL: str = 'sqlite:///./observatorio.db'
+    DATABASE_URL: str = 'sqlite+aiosqlite:///./observatorio.db'
     ENVIRONMENT: str = 'development'
+
+    # Modelos por nível no formato "provedor:modelo" (init_chat_model).
+    # Os *_KWARGS são repassados ao construtor do modelo (JSON no .env).
+    LLM_FAST_MODEL: str = DEFAULT_MODEL
+    LLM_FAST_MODEL_KWARGS: dict[str, Any] = DEFAULT_MODEL_KWARGS
+    LLM_MEDIUM_MODEL: str = DEFAULT_MODEL
+    LLM_MEDIUM_MODEL_KWARGS: dict[str, Any] = DEFAULT_MODEL_KWARGS
+    LLM_ADVANCED_MODEL: str = DEFAULT_MODEL
+    LLM_ADVANCED_MODEL_KWARGS: dict[str, Any] = DEFAULT_MODEL_KWARGS
