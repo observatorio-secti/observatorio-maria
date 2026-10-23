@@ -6,7 +6,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from observatorio_maria.database import engine
 from observatorio_maria.llm.registry import ModelConfigurationError
+from observatorio_maria.observability.telemetry import setup_telemetry
 from observatorio_maria.routers import conversations, health
 from observatorio_maria.schemas import Message
 from observatorio_maria.settings import Settings
@@ -47,6 +49,7 @@ def mount_demo(app: FastAPI, settings: Settings):
 
 
 mount_demo(app, Settings())
+setup_telemetry(app, engine)
 
 
 @app.get('/', status_code=HTTPStatus.OK, response_model=Message)

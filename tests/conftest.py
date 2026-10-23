@@ -1,3 +1,4 @@
+import os
 from itertools import repeat
 
 import pytest
@@ -11,7 +12,11 @@ from langchain_core.messages import AIMessage
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from observatorio_maria.app import app
+# A suíte padrão roda sem telemetria; os testes de observabilidade religam o
+# SDK com exportadores em memória (ver test_observability.py).
+os.environ['OTEL_SDK_DISABLED'] = 'true'
+
+from observatorio_maria.app import app  # noqa: E402
 from observatorio_maria.database import (
     SessionLocal,
     enable_sqlite_foreign_keys,

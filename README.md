@@ -14,6 +14,7 @@ API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa na Bah
 - **[Alembic](https://alembic.sqlalchemy.org/)**: versionamento do esquema do banco (template async).
 - **[Pytest](https://docs.pytest.org/) + [pytest-asyncio](https://pytest-asyncio.readthedocs.io/) & [Coverage](https://coverage.readthedocs.io/)**: testes assíncronos com cobertura.
 - **[Ruff](https://docs.astral.sh/ruff/)**: linter e formatador.
+- **[OpenTelemetry](https://opentelemetry.io/) + [OpenInference](https://github.com/Arize-ai/openinference)**: traces, métricas e logs em padrão aberto, incluindo os passos da IA.
 - **[Taskipy](https://github.com/illBeRoy/taskipy)**: atalhos de tarefas.
 
 ---
@@ -25,6 +26,7 @@ API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa na Bah
 ├── pyproject.toml
 ├── alembic.ini                 # Configuração do Alembic (URL vem do Settings)
 ├── migrations/                 # Migrações do banco (Alembic async)
+├── observability/              # Stack local: Collector, Tempo, Loki, Prometheus, Grafana e Phoenix
 ├── openspec/                   # Planejamento (propostas, specs, design e tasks)
 ├── src/
 │   └── observatorio_maria/
@@ -39,6 +41,9 @@ API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa na Bah
 │       ├── services/
 │       │   └── chat.py         # ChatService: contexto, chamada ao modelo e persistência
 │       ├── demo/               # Página de demonstração montada em /demo
+│       ├── observability/
+│       │   ├── telemetry.py    # Setup do OpenTelemetry (traces, métricas e logs via OTLP)
+│       │   └── genai.py        # Métricas GenAI (callback LangChain) e tracer OpenInference
 │       └── routers/
 │           ├── health.py       # /health
 │           └── conversations.py# /conversations e /conversations/{id}/messages
@@ -145,6 +150,46 @@ Hoje a Maria produz apenas blocos `text`. Os blocos `chart` e `table` já fazem 
 
 ---
 
+## 🔭 Observabilidade
+
+A aplicação emite **traces, métricas e logs** com OpenTelemetry e envia tudo via OTLP a um **OpenTelemetry Collector**. O Collector roteia cada sinal para a ferramenta feita para ele:
+
+| Ferramenta | Papel | URL local |
+|---|---|---|
+| **Grafana Tempo** | Todos os traces: HTTP → banco → IA, no mesmo trace | via Grafana |
+| **Prometheus** | Métricas HTTP e de IA (tokens, latência e falhas do modelo) | http://localhost:9090 |
+| **Loki** | Logs da aplicação com `trace_id` | via Grafana |
+| **Grafana** | Visualização e correlação: do trace para os logs e de volta; dashboard "Maria · API e IA" | http://localhost:3000 |
+| **Arize Phoenix** | Análise da IA: caminho de cada resposta, prompts, tokens e sessões (= conversas) | http://localhost:6006 |
+
+```bash
+docker compose -f observability/compose.yaml up -d
+```
+
+Com a stack no ar, basta rodar a API (`task run`). Os exporters usam por padrão `http://localhost:4318`.
+
+### O que é emitido
+
+- **Caminho da IA:** cada resposta gera um span `maria.chat` (OpenInference `CHAIN`) com a pergunta, a resposta e o `session.id` da conversa. Dentro dele ficam as chamadas ao modelo (`LLM`), com mensagens, modelo e tokens. Quando a Maria ganhar ferramentas, como consultas a bancos, elas aparecem como passos dentro desse span.
+- **Métricas GenAI** (convenções semânticas do OpenTelemetry): `gen_ai.client.token.usage` e `gen_ai.client.operation.duration`.
+- **Métricas HTTP:** `http.server.request.duration` por rota e status.
+- **Logs:** "Resposta gerada" e falhas do modelo, correlacionados ao trace.
+
+O Phoenix recebe só os spans de IA: o Collector filtra o resto e trata o `maria.chat` como raiz. O Tempo recebe o trace completo, sem alterações.
+
+### Variáveis
+
+| Variável | Descrição | Padrão |
+|---|---|---|
+| `OTEL_SDK_DISABLED` | Desliga toda a telemetria | `false` |
+| `OTEL_SERVICE_NAME` | Nome do serviço nos sinais | `observatorio-maria` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Endpoint OTLP/HTTP do Collector | `http://localhost:4318` |
+| `OPENINFERENCE_HIDE_INPUTS` / `OPENINFERENCE_HIDE_OUTPUTS` | Oculta o conteúdo das mensagens nos spans (LGPD), mantendo modelo, tokens e latência | `false` |
+
+Sem a stack rodando, use `OTEL_SDK_DISABLED=true` para evitar avisos de exportação no log. A API funciona normalmente nos dois casos.
+
+---
+
 ## 🛠️ Comandos Automatizados (Taskipy)
 
 | Comando | Descrição | Comando subjacente |
@@ -160,6 +205,7 @@ Hoje a Maria produz apenas blocos `text`. Os blocos `chart` e `table` já fazem 
 
 - **Assíncronos**: `pytest-asyncio` (`asyncio_mode = auto`) e `httpx.AsyncClient` com `ASGITransport`.
 - **Banco isolado em memória**: `sqlite+aiosqlite:///:memory:` com `StaticPool`, recriado a cada teste.
+- **Telemetria em memória**: a suíte roda com `OTEL_SDK_DISABLED=true`, e os testes de observabilidade usam exportadores em memória (`InMemorySpanExporter`, `InMemoryMetricReader`, `InMemoryLogRecordExporter`).
 - **Sem chamadas a LLMs reais**: o `ModelRegistry` é substituído via `app.dependency_overrides` por `GenericFakeChatModel` do LangChain. Um callback de gravação (`RecordingHandler`) captura as mensagens enviadas ao modelo, e o `FailingChatModel` simula falhas do provedor.
 
 ```bash

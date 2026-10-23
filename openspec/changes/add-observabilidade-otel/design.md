@@ -62,7 +62,7 @@ O `observability/otel-collector.yaml` define estes pipelines:
 - `metrics`: otlp → batch → `prometheus` (endpoint `:8889`), e o Prometheus faz o scrape. É o modelo pull, nativo do Prometheus.
 - `logs`: otlp → batch → `otlphttp/loki` (endpoint OTLP nativo do Loki, `/otlp`).
 
-Se o Phoenix não exibir como raiz um `maria.chat` cujo pai (o span HTTP) foi filtrado, o pipeline do Phoenix ganha um `transform` que zera o `parent_span_id` dos spans `maria.chat`. Isso é verificado ao subir a stack.
+No pipeline do Phoenix, um `transform` zera o `parent_span_id` dos spans `maria.chat`. A verificação mostrou que, sem isso, as sessões do Phoenix ficam sem a primeira entrada, porque o Phoenix monta sessões a partir de spans raiz. O Tempo recebe o trace original.
 
 ### 7. Stack Docker Compose (`observability/compose.yaml`)
 Imagens com versões fixas:
@@ -85,6 +85,12 @@ Também provisiona um dashboard "Maria" com taxa e latência HTTP e uso de token
 
 ### 8. Testes
 A suíte padrão roda com `OTEL_SDK_DISABLED=true`, definido no `conftest` antes do import da app. Os testes de telemetria religam o SDK via `monkeypatch` e usam `InMemorySpanExporter`, `InMemoryMetricReader` e `InMemoryLogExporter`, instrumentando o LangChain com o provider de teste (e desinstrumentando ao final). A integração com FastAPI e SQLAlchemy é verificada na stack real.
+
+### 9. Faixa de Python
+O `openinference-instrumentation-langchain` declara `requires-python <3.15`. O `requires-python` do projeto passa de `>=3.12,<4.0` para `>=3.12,<3.15`; o ambiente atual usa 3.14. A faixa é ampliada quando o OpenInference suportar versões novas.
+
+### 10. SQLAlchemy na série 2.0
+O `opentelemetry-instrumentation-sqlalchemy` só suporta `sqlalchemy <2.1` e se recusa a instrumentar a 2.1. A dependência passa a `sqlalchemy[asyncio]>=2.0.35,<2.1` em vez de forçar a instrumentação com `skip_dep_check`. O limite é removido quando a instrumentação suportar a 2.1.
 
 ## Risks / Trade-offs
 

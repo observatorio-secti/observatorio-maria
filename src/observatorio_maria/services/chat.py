@@ -1,13 +1,16 @@
 import json
+import logging
 from typing import Annotated
 
 from fastapi import Depends
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
     HumanMessage,
     SystemMessage,
 )
+from openinference.instrumentation import OITracer, using_session
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +26,13 @@ from observatorio_maria.models import (
     Message,
     MessageRole,
 )
+from observatorio_maria.observability.genai import (
+    get_llm_callbacks,
+    get_tracer,
+)
 from observatorio_maria.schemas import TextBlock
+
+logger = logging.getLogger(__name__)
 
 AUTO_TITLE_MAX_LENGTH = 60
 
@@ -72,9 +81,17 @@ async def get_history(
 
 
 class ChatService:
-    def __init__(self, session: AsyncSession, registry: ModelRegistry):
+    def __init__(
+        self,
+        session: AsyncSession,
+        registry: ModelRegistry,
+        tracer: OITracer,
+        callbacks: list[BaseCallbackHandler],
+    ):
         self.session = session
         self.registry = registry
+        self.tracer = tracer
+        self.callbacks = callbacks
 
     async def send_message(
         self, conversation: Conversation, content: str
@@ -93,10 +110,37 @@ class ChatService:
             HumanMessage(content),
         ]
 
-        try:
-            response = await registered.model.ainvoke(prompt)
-        except Exception as exc:
-            raise ModelInvocationError(str(exc)) from exc
+        # Span de cadeia que agrupa o caminho da IA nesta resposta; a sessão
+        # (id da conversa) permite ver a conversa inteira no Phoenix.
+        with (
+            using_session(str(conversation.id)),
+            self.tracer.start_as_current_span(
+                'maria.chat', openinference_span_kind='chain'
+            ) as span,
+        ):
+            span.set_input(content)
+            try:
+                response = await registered.model.ainvoke(
+                    prompt,
+                    config={
+                        'callbacks': self.callbacks,
+                        'metadata': {'model_tier': str(registered.tier)},
+                    },
+                )
+            except Exception as exc:
+                logger.exception(
+                    'Falha ao gerar resposta do modelo',
+                    extra={'conversation.id': str(conversation.id)},
+                )
+                raise ModelInvocationError(str(exc)) from exc
+            span.set_output(response.text)
+            logger.info(
+                'Resposta gerada',
+                extra={
+                    'conversation.id': str(conversation.id),
+                    'model.tier': str(registered.tier),
+                },
+            )
 
         assistant_message = Message(
             conversation_id=conversation.id,
@@ -119,5 +163,9 @@ class ChatService:
 def get_chat_service(
     session: Annotated[AsyncSession, Depends(get_session)],
     registry: Annotated[ModelRegistry, Depends(get_model_registry)],
+    tracer: Annotated[OITracer, Depends(get_tracer)],
+    callbacks: Annotated[
+        list[BaseCallbackHandler], Depends(get_llm_callbacks)
+    ],
 ) -> ChatService:
-    return ChatService(session, registry)
+    return ChatService(session, registry, tracer, callbacks)

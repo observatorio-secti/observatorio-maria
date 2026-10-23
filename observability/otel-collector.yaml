@@ -1,0 +1,63 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+  # O Phoenix analisa o comportamento do LLM: recebe apenas spans
+  # OpenInference (cadeias, LLM, ferramentas). O Tempo recebe tudo.
+  filter/openinference-only:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["openinference.span.kind"] == nil'
+
+  # No Phoenix, `maria.chat` é o ponto de entrada da IA: sem o span HTTP
+  # (filtrado acima), ele vira a raiz do trace, como o Phoenix espera para
+  # montar sessões. O pipeline do Tempo não passa por aqui.
+  transform/phoenix-roots:
+    error_mode: ignore
+    trace_statements:
+      - 'set(span.parent_span_id, SpanID(0x0000000000000000)) where span.name == "maria.chat"'
+
+exporters:
+  otlp_grpc/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  otlp_http/phoenix:
+    endpoint: http://phoenix:6006
+  # Expõe as métricas para o Prometheus coletar (modelo pull).
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  # Endpoint OTLP nativo do Loki.
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_grpc/tempo]
+    traces/phoenix:
+      receivers: [otlp]
+      processors: [filter/openinference-only, transform/phoenix-roots, batch]
+      exporters: [otlp_http/phoenix]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/loki]
