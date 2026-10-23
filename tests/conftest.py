@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from itertools import repeat
 
 import pytest
@@ -39,7 +40,7 @@ from observatorio_maria.llm.registry import (
     RegisteredModel,
     get_model_registry,
 )
-from observatorio_maria.models import table_registry
+from observatorio_maria.models import CatalogDataSource, table_registry
 from observatorio_maria.observability.genai import (
     GenAIMetricsHandler,
     get_llm_callbacks,
@@ -202,3 +203,50 @@ def metric_points(reader, name):
         if metric.name == name
         for point in metric.data.data_points
     ]
+
+
+# --- Catálogo: banco de origem SQLite em arquivo -----------------------------
+
+SOURCE_DDL = """
+CREATE TABLE instituicoes (
+    id INTEGER PRIMARY KEY,
+    nome VARCHAR(255) NOT NULL,
+    sigla VARCHAR(32)
+);
+CREATE TABLE pesquisadores (
+    id INTEGER PRIMARY KEY,
+    nome VARCHAR(255),
+    lattes VARCHAR(255)
+);
+CREATE TABLE bolsas (
+    id INTEGER PRIMARY KEY,
+    status VARCHAR(20) NOT NULL,
+    pesquisador_id INTEGER NOT NULL REFERENCES pesquisadores (id),
+    instituicao_id INTEGER NOT NULL REFERENCES instituicoes (id)
+);
+CREATE VIEW bolsas_por_status AS
+    SELECT status, COUNT(*) AS quantidade FROM bolsas GROUP BY status;
+"""
+
+
+@pytest.fixture
+def source_db(tmp_path, monkeypatch):
+    """Banco de origem em arquivo e a URL dele em SOURCE_DATABASE_URL."""
+    path = tmp_path / 'origem.db'
+    with sqlite3.connect(path) as conn:
+        conn.executescript(SOURCE_DDL)
+    monkeypatch.setenv('SOURCE_DATABASE_URL', f'sqlite+aiosqlite:///{path}')
+    return path
+
+
+@pytest.fixture
+async def datasource(session):
+    datasource = CatalogDataSource(
+        id='origem',
+        name='Origem de teste',
+        connection_env='SOURCE_DATABASE_URL',
+        schemas=['main'],
+    )
+    session.add(datasource)
+    await session.commit()
+    return datasource

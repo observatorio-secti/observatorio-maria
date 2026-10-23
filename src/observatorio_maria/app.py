@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from http import HTTPStatus
 from pathlib import Path
 
@@ -6,10 +8,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from observatorio_maria.database import engine
+from observatorio_maria.catalog.drift import start_periodic_checks
+from observatorio_maria.catalog.introspection import introspect
+from observatorio_maria.database import SessionLocal, engine
 from observatorio_maria.llm.registry import ModelConfigurationError
 from observatorio_maria.observability.telemetry import setup_telemetry
-from observatorio_maria.routers import conversations, health
+from observatorio_maria.routers import catalog, conversations, health
 from observatorio_maria.schemas import Message
 from observatorio_maria.settings import Settings
 
@@ -17,10 +21,25 @@ from observatorio_maria.settings import Settings
 # credenciais (ex.: OPENAI_API_KEY) diretamente do ambiente.
 load_dotenv()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Verificação periódica de defasagem do catálogo (somente leitura).
+    task = start_periodic_checks(
+        Settings().CATALOG_CHECK_INTERVAL_SECONDS, SessionLocal, introspect
+    )
+    yield
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
 app = FastAPI(
     title='Observatório Maria',
     version='0.1.0',
     description='API do Observatório Maria',
+    lifespan=lifespan,
 )
 
 
@@ -36,6 +55,7 @@ async def model_configuration_error_handler(
 
 app.include_router(health.router)
 app.include_router(conversations.router)
+app.include_router(catalog.router)
 
 
 def mount_demo(app: FastAPI, settings: Settings):

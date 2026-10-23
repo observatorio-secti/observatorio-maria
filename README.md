@@ -1,6 +1,6 @@
 # Observatório Maria · API
 
-API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa científica, tecnológica e de inovação na Bahia. A API gerencia conversas, gera respostas com modelos de linguagem via LangChain (inclusive em streaming) e é observável de ponta a ponta com OpenTelemetry.
+API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa científica, tecnológica e de inovação na Bahia. A API gerencia conversas, gera respostas com modelos de linguagem via LangChain (inclusive em streaming), mantém o catálogo dos bancos de dados que a IA vai consultar e é observável de ponta a ponta com OpenTelemetry.
 
 ---
 
@@ -14,7 +14,9 @@ API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa cient�
 | **Modelos de IA** | Três níveis internos (`fast`, `medium`, `advanced`), configuráveis por ambiente e independentes de provedor. Não são expostos nem escolhidos pelo cliente. |
 | **Confiabilidade** | Persistência atômica: pergunta e resposta só são gravadas quando a geração termina. Falhas e interrupções não deixam registros parciais. |
 | **Observabilidade** | Traces, métricas e logs via OpenTelemetry. O caminho de cada resposta da IA fica visível no Arize Phoenix. Stack local com Grafana, Tempo, Loki e Prometheus. |
-| **Demo** | Página em `/demo/` para conversar com a Maria e visualizar o contrato de blocos. |
+| **Catálogo de dados** | Descreve bancos externos para a IA: o que o modelo **enxerga**, como interpreta cada tabela e coluna e o que pode **consultar**. Seed via YAML, sincronização somente leitura com o schema real, exportação e prévia do contexto. Primeira fonte: o banco do módulo de fomento. |
+| **Defasagem do schema** | Verificação periódica (e sob demanda) se a origem mudou desde a última sincronização, com o diff do que mudou, sincronização automática opcional e leitura dos valores de enum, apontando os que ainda não têm descrição. |
+| **Demo** | Página em `/demo/` para conversar com a Maria, visualizar o contrato de blocos e configurar o catálogo de dados. |
 
 ---
 
@@ -22,7 +24,8 @@ API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa cient�
 
 - **Python** 3.12–3.14, **FastAPI** (SSE nativo), **Pydantic Settings**.
 - **LangChain** (`init_chat_model`, independente de provedor), começando com **OpenAI**.
-- **SQLAlchemy 2.0 assíncrono** (`aiosqlite` em dev, `psycopg` para PostgreSQL) e **Alembic**.
+- **SQLAlchemy 2.0 assíncrono** (`aiosqlite` em dev, `psycopg` para PostgreSQL) e **Alembic**. A introspecção dos bancos externos usa o `Inspector` do SQLAlchemy.
+- **PyYAML** para o seed e a exportação do catálogo.
 - **OpenTelemetry** + **OpenInference**. Na stack local: **Collector**, **Grafana Tempo**, **Loki**, **Prometheus**, **Grafana** e **Arize Phoenix** (todos open source, sem assinatura).
 - **Pytest** + **pytest-asyncio**, **Ruff**, **Taskipy** e **Poetry**.
 
@@ -43,6 +46,12 @@ services/chat.py    ← regra de negócio: contexto, geração em stream, persis
 models.py (banco)   llm/registry.py (ModelRegistry → BaseChatModel do LangChain)
                         │
 observability/  ◄───────┘ span maria.chat, métricas GenAI e logs → OTLP → Collector
+
+routers/catalog.py  ← configuração do catálogo de dados
+   │
+   ▼
+catalog/            ← introspecção somente leitura → banco de origem (ex.: fomento)
+                       seed/exportação YAML · prévia do contexto do modelo
 ```
 
 - **As rotas são finas** e tudo é injetado via `Depends`: sessão do banco, registro de modelos, tracer e callbacks. Nos testes, cada peça é trocada por um fake.
@@ -55,6 +64,8 @@ observability/  ◄───────┘ span maria.chat, métricas GenAI e l
 .
 ├── pyproject.toml / poetry.lock     # Dependências, Ruff, Pytest e Taskipy
 ├── alembic.ini · migrations/        # Migrações do banco (Alembic async)
+├── catalog/                         # Seeds YAML do catálogo (um arquivo por fonte)
+│   └── fomento.yaml
 ├── observability/                   # Stack local de observabilidade (Docker Compose)
 │   ├── compose.yaml
 │   ├── otel-collector.yaml          # Roteamento: Tempo, Phoenix, Prometheus e Loki
@@ -65,15 +76,23 @@ observability/  ◄───────┘ span maria.chat, métricas GenAI e l
 │   ├── app.py                       # FastAPI, routers, handler 503, demo e telemetria
 │   ├── settings.py                  # Configurações (Pydantic Settings)
 │   ├── database.py                  # Engine async e get_session
-│   ├── models.py                    # Tabelas Conversation e Message
-│   ├── schemas.py                   # Schemas da API, blocos e eventos SSE
+│   ├── models.py                    # Conversas, mensagens e tabelas do catálogo
+│   ├── schemas.py                   # Schemas da API, blocos, eventos SSE e catálogo
+│   ├── catalog/
+│   │   ├── introspection.py         # Leitura somente leitura do schema de origem
+│   │   ├── sync.py                  # Fusão do schema com o catálogo
+│   │   ├── drift.py                 # Impressão digital, diff, verificação e ciclo periódico
+│   │   ├── yaml_io.py               # Formato YAML, seed e exportação
+│   │   ├── seed.py                  # Comando `task seed`
+│   │   └── context.py               # Texto que o modelo recebe sobre uma fonte
 │   ├── llm/
 │   │   ├── registry.py              # ModelTier, ModelRegistry e get_model_registry
 │   │   └── prompts.py               # Prompt de sistema da Maria
 │   ├── services/chat.py             # ChatService (stream_message / send_message)
 │   ├── routers/
 │   │   ├── health.py                # /health
-│   │   └── conversations.py         # /conversations, mensagens e streaming
+│   │   ├── conversations.py         # /conversations, mensagens e streaming
+│   │   └── catalog.py               # /catalog: fontes, entidades, colunas e relacionamentos
 │   ├── observability/
 │   │   ├── telemetry.py             # Setup do OpenTelemetry (OTLP)
 │   │   └── genai.py                 # Métricas GenAI (callback) e tracer OpenInference
@@ -113,6 +132,12 @@ Preencha ao menos o `OPENAI_API_KEY`. Sem a stack de observabilidade rodando, de
 alembic upgrade head
 ```
 
+Para carregar o catálogo do fomento, defina `FOMENTO_DATABASE_URL` e rode o seed (veja [Catálogo de dados](#-catálogo-de-dados)):
+
+```bash
+task seed
+```
+
 ### 4. Rodar
 
 ```bash
@@ -149,6 +174,8 @@ As variáveis são lidas do ambiente e do `.env`.
 | `OTEL_SERVICE_NAME` | Nome do serviço nos sinais | `observatorio-maria` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Endpoint OTLP/HTTP do Collector | `http://localhost:4318` |
 | `OPENINFERENCE_HIDE_INPUTS` / `OPENINFERENCE_HIDE_OUTPUTS` | Oculta o texto das mensagens nos traces (LGPD) | `false` |
+| `CATALOG_CHECK_INTERVAL_SECONDS` | Intervalo da verificação de defasagem do catálogo (também roda ao iniciar). `0` desliga | `3600` |
+| `FOMENTO_DATABASE_URL` | URL do banco do fomento, com driver assíncrono (`postgresql+psycopg://…`). O nome da variável é definido por fonte no catálogo | — |
 
 ---
 
@@ -165,6 +192,8 @@ As variáveis são lidas do ambiente e do `.env`.
 | GET | `/conversations/{id}/messages` | Histórico em ordem cronológica |
 | POST | `/conversations/{id}/messages` | Envia `{"content": "..."}` e retorna `{user_message, assistant_message}` |
 | POST | `/conversations/{id}/messages/stream` | Igual ao anterior, mas a resposta chega em **Server-Sent Events** |
+
+Os endpoints do catálogo estão em [Catálogo de dados](#-catálogo-de-dados).
 
 O corpo de envio aceita **somente** `content` (1 a 10.000 caracteres). Campos extras, como tentar escolher o modelo, são rejeitados com 422.
 
@@ -226,6 +255,74 @@ Se o cliente fechar a conexão no meio, a geração é interrompida e nada é gr
 
 ---
 
+## 🗂️ Catálogo de dados
+
+O catálogo descreve os bancos de outros sistemas que a Maria vai consultar. Ele fica no banco da própria Maria, e os bancos de origem **nunca são alterados**: a sincronização abre uma conexão somente leitura e só lê o schema.
+
+```text
+catalog/fomento.yaml ──task seed──────────┐
+                                          ▼
+banco do fomento ──sincronizar──▶  catálogo (banco da Maria)  ◀── API / demo
+                   (só leitura)           │
+                                          ▼
+                                 prévia do contexto do modelo
+```
+
+| Nível | Configuração |
+|---|---|
+| **Fonte** | Nome, descrição, **instruções de negócio** para a IA, variável de ambiente com a conexão (nunca a URL), schemas a ler e liga/desliga |
+| **Entidade** (tabela, view ou view materializada) | Rótulo, descrição, sinônimos, **visível** (o modelo enxerga) e **consultável** (o modelo pode consultar). Consultável exige visível |
+| **Coluna** | Rótulo, descrição, sinônimos, valores conhecidos com significado, **visível** e **acesso**: `full` (pode ler valores) ou `aggregate` (só filtrar, agrupar e contar; para dados pessoais) |
+| **Relacionamento** | Liga/desliga e descrição. Vêm das chaves estrangeiras ou, quando não há chave (views), do YAML |
+
+**Dados técnicos e editoriais.** A sincronização só atualiza tipo, chaves, ordem e presença. Rótulos, descrições e interruptores vêm de pessoas e nunca são sobrescritos. O que é novo na origem entra **oculto**; o que sumiu fica **ausente**, com a configuração guardada, e volta se reaparecer.
+
+**YAML é seed, não fonte de verdade.** `task seed` carrega `catalog/*.yaml` e cria apenas o que ainda não existe. Para recriar uma fonte a partir do arquivo, descartando as edições:
+
+```bash
+task seed -- --reset
+```
+
+No YAML, entidades e colunas listadas ficam visíveis (e as entidades, consultáveis) por padrão. O que não é listado entra oculto na sincronização. `GET /catalog/datasources/{id}/export` devolve a configuração atual no mesmo formato, pronta para versionar.
+
+**Defasagem do schema.** Cada sincronização guarda uma impressão digital da estrutura da origem: entidades, colunas, tipos, chaves e valores de enum. A ordem das colunas não entra, para não gerar alarme por reordenação. A API compara essa impressão com o schema atual ao iniciar, a cada `CATALOG_CHECK_INTERVAL_SECONDS` e sob demanda (`POST .../check`). A fonte fica com um destes estados:
+
+| Estado | Significado |
+|---|---|
+| `up_to_date` | A origem não mudou desde a última sincronização |
+| `outdated` | A origem mudou. `drift` lista o que a próxima sincronização aplicaria: entidades e colunas novas ou removidas, colunas alteradas, valores de enum novos ou removidos e relacionamentos |
+| `error` | Não foi possível ler a origem (`check_error`) |
+| `unknown` | Nunca verificada |
+
+Com `auto_sync` ligado na fonte (API, YAML ou demo), uma defasagem é sincronizada na hora. É seguro: o que é novo entra oculto e o que sumiu fica ausente. O resumo vai para os logs. Fontes desativadas não são verificadas.
+
+**Valores de enum.** A sincronização lê os valores dos tipos enum nativos (ex.: `bolsa_status`). O contexto do modelo lista os valores **atuais** da origem, com as descrições do catálogo. Cada coluna expõe `undescribed_values` (sem descrição, para revisar) e `obsolete_values` (descritos, mas que não existem mais, e que ficam fora do contexto). Colunas texto com `CHECK ... IN (...)`, como `areas_conhecimento.tipo`, não são detectadas e continuam dependendo do YAML.
+
+**Fluxo para uma nova fonte:** escrever o YAML (ou criar a fonte pela API) → `task seed` → sincronizar → revisar na demo, olhando a aba "O que a Maria enxerga".
+
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/catalog/datasources` | Lista fontes com totais de entidades, visíveis e consultáveis |
+| POST | `/catalog/datasources` | Cria uma fonte (`id` em slug; 409 se já existir) |
+| GET · PATCH · DELETE | `/catalog/datasources/{id}` | Detalha, edita ou exclui a fonte (e todo o seu catálogo) |
+| POST | `/catalog/datasources/{id}/sync` | Sincroniza com o schema da origem e devolve o resumo |
+| POST | `/catalog/datasources/{id}/check` | Verifica a defasagem sem alterar o catálogo (ou sincroniza, com `auto_sync`) |
+| GET | `/catalog/datasources/{id}/entities` | Lista as entidades |
+| GET · PATCH | `/catalog/entities/{id}` | Detalha (com colunas) ou edita uma entidade |
+| PATCH | `/catalog/columns/{id}` | Edita uma coluna |
+| GET | `/catalog/datasources/{id}/relationships` | Lista os relacionamentos |
+| PATCH | `/catalog/relationships/{id}` | Liga, desliga ou descreve um relacionamento |
+| GET | `/catalog/datasources/{id}/context` | Texto em Markdown que o modelo receberá sobre a fonte |
+| GET | `/catalog/datasources/{id}/export` | Configuração atual em YAML |
+
+Na sincronização, 422 indica a variável de conexão não definida e 502 indica origem inacessível ou URL inválida. Nos dois casos o catálogo não muda, e as mensagens de erro nunca repetem a URL.
+
+> **Sem autenticação por enquanto:** qualquer cliente com acesso à API altera o catálogo. Não exponha estes endpoints fora do ambiente de desenvolvimento antes da autenticação.
+>
+> **Conexão com a origem:** em desenvolvimento, use o usuário que já existe no banco do fomento. A sessão é forçada a somente leitura (`default_transaction_read_only`). Em produção, prefira um usuário somente leitura criado pelos responsáveis por aquele banco.
+
+---
+
 ## 🤖 Modelos de IA
 
 - Os níveis `fast`, `medium` e `advanced` são **internos**: a aplicação decide qual usar, e hoje o chat usa `medium` (`CHAT_MODEL_TIER` em `services/chat.py`). O nível e o modelo de cada resposta ficam gravados no banco, para auditoria, mas não aparecem na API.
@@ -250,7 +347,8 @@ Se o cliente fechar a conexão no meio, a geração é interrompida e nada é gr
   ```
 - Tabelas:
   - `conversations`: `id`, `title`, `created_at` e `updated_at`;
-  - `messages`: `id`, `conversation_id`, `role`, `content` (JSON com os blocos), `model_tier`, `model_name` e `created_at`. Excluir a conversa apaga as mensagens em cascata.
+  - `messages`: `id`, `conversation_id`, `role`, `content` (JSON com os blocos), `model_tier`, `model_name` e `created_at`. Excluir a conversa apaga as mensagens em cascata;
+  - `catalog_datasources`, `catalog_entities`, `catalog_columns` e `catalog_relationships`: o catálogo de dados. Excluir uma fonte apaga o catálogo dela em cascata.
 
 ---
 
@@ -301,6 +399,7 @@ Acesse `/demo/` com a API rodando. A página consome os endpoints reais:
 
 - **Chat:** digite e envie logo ao abrir (a conversa é criada automaticamente). A resposta aparece enquanto é gerada, renderizada em Markdown. Também dá para renomear e excluir conversas, e o título é gerado automaticamente.
 - **Contrato de blocos:** uma resposta de exemplo com `text`, `chart` (Chart.js) e `table`, mais um tipo desconhecido ignorado, ao lado do JSON.
+- **Catálogo de dados:** escolha a fonte, sincronize, ligue e desligue entidades, colunas e relacionamentos, edite descrições e instruções, veja **o que a Maria enxerga** e baixe o YAML. A barra da fonte mostra o estado do schema, com "Verificar agora", o interruptor de sincronização automática e um quadro com as mudanças detectadas. Em cada coluna com valores conhecidos, "valores" abre a edição do significado de cada um, destacando os sem descrição e os obsoletos.
 
 Para desligar a demo, use `DEMO_ENABLED=false`. Ela carrega Chart.js, marked e DOMPurify de CDN.
 
@@ -311,6 +410,7 @@ Para desligar a demo, use `DEMO_ENABLED=false`. Ela carrega Chart.js, marked e D
 | Comando | Descrição |
 |---|---|
 | `task run` | Servidor de desenvolvimento com reload |
+| `task seed` | Carrega `catalog/*.yaml` no catálogo (`-- --reset` recria as fontes) |
 | `task test` | Lint + testes com cobertura (gera `htmlcov/`) |
 | `task lint` | Ruff (estilo e boas práticas) |
 | `task format` | Corrige e formata o código |
@@ -322,6 +422,7 @@ Para desligar a demo, use `DEMO_ENABLED=false`. Ela carrega Chart.js, marked e D
   - `FailingChatModel`, que simula a falha do provedor.
 
   Um callback de gravação confere as mensagens enviadas ao modelo.
+- **Catálogo contra um banco real:** os testes sincronizam com um SQLite de origem em arquivo temporário (tabelas, view e chaves estrangeiras), inclusive tabelas e colunas que somem e voltam. Os testes de defasagem alteram essa origem e conferem que o diff bate com o relatório da sincronização seguinte. Os enums, que o SQLite não tem, são testados com snapshots montados à mão.
 - **Telemetria em memória:** a suíte roda com `OTEL_SDK_DISABLED=true`, e os testes de observabilidade usam `InMemorySpanExporter`, `InMemoryMetricReader` e `InMemoryLogRecordExporter`.
 
 ---
@@ -341,6 +442,7 @@ Especificações atuais do sistema, em `openspec/specs/`:
 | `conversation-management` | Ciclo de vida das conversas |
 | `conversation-messaging` | Envio (completo e streaming), contexto, falhas, título e histórico |
 | `llm-model-tiers` | Níveis internos de modelo e configuração |
+| `data-catalog` | Catálogo de fontes de dados, sincronização, defasagem do schema, valores de enum, seed/exportação YAML e prévia do contexto |
 | `demo-page` | Página de demonstração |
 | `observability` | Traces, métricas, logs e stack |
 

@@ -1,0 +1,280 @@
+# Seed do catálogo do banco do módulo de fomento.
+#
+# É só o ponto de partida: o seed cria o que ainda não existe e nunca
+# sobrescreve o que foi editado depois pela API ou pela demo. Para recriar a
+# fonte a partir deste arquivo, descartando edições: task seed -- --reset
+#
+# Entidades e colunas listadas aqui ficam visíveis (e as entidades,
+# consultáveis) por padrão. O que não está listado entra oculto na
+# sincronização: tabelas de ingestão, conflitos e alembic_version.
+
+datasource:
+  id: fomento
+  name: Fomento à pesquisa
+  description: >-
+    Bolsas de fomento à pesquisa na Bahia: bolsistas, projetos, instituições,
+    áreas do conhecimento e territórios de identidade.
+  connection_env: FOMENTO_DATABASE_URL
+  schemas: [public]
+  instructions: |
+    - Banco PostgreSQL. Os identificadores (`id` e colunas `*_id`) são UUIDs internos: use-os só em junções e nunca os mostre ao usuário.
+    - Para contar bolsas, considere apenas status REGULAR, RESOLVIDA e PENDENTE_REVISAO; DESCARTADA nunca entra nas contagens. É o mesmo recorte do painel do módulo de fomento.
+    - Para totais por ano, modalidade, instituição, cidade, território ou área, prefira `mv_bolsas_metricas` e some a coluna `quantidade` (não use COUNT(*) nela).
+    - Uma bolsa está ativa numa data se começou até ela e `quando_terminou` é nula ou posterior.
+    - Áreas do conhecimento formam uma árvore (grande área > área > subárea); um projeto pode apontar para qualquer nível.
+
+entities:
+  - name: bolsas
+    label: Bolsas
+    description: >-
+      Cada bolsa concedida a um pesquisador num projeto, vinculada a uma
+      instituição. Um pesquisador não tem duas bolsas válidas no mesmo período.
+    synonyms: [bolsa, fomento, auxílio, bolsista]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: quando_iniciou
+        label: Início
+        description: Data de início da bolsa.
+      - name: quando_terminou
+        label: Término
+        description: Data de fim da bolsa; nula quando ainda vigente ou sem data.
+      - name: data_saida_pesquisador
+        label: Saída do pesquisador
+        description: Data em que o pesquisador saiu da bolsa, quando diferente do término.
+      - name: modalidade
+        label: Modalidade
+        description: Modalidade da bolsa (texto livre vindo da planilha de origem).
+        values:
+          - {value: Iniciação Científica (IC)}
+          - {value: Mestrado}
+          - {value: Doutorado}
+          - {value: Pós-Doutorado}
+          - {value: Fixação de Doutores}
+      - name: nome_curso
+        label: Curso
+        description: Curso ao qual a bolsa está vinculada.
+      - name: cep_referencia
+        label: CEP de referência
+        description: CEP de referência do bolsista.
+        access: aggregate
+      - name: status
+        label: Situação
+        description: Situação da bolsa após a ingestão e a revisão de conflitos.
+        values:
+          - {value: REGULAR, description: válida}
+          - {value: PENDENTE_REVISAO, description: em conflito de período aguardando revisão; conta nos totais}
+          - {value: RESOLVIDA, description: conflito revisado e mantido; conta nos totais}
+          - {value: DESCARTADA, description: descartada na revisão; não conta nos totais}
+      - name: is_conflict
+        label: Em conflito
+        description: Verdadeiro quando a bolsa se sobrepõe a outra do mesmo pesquisador.
+      - name: projeto_id
+        description: Projeto da bolsa.
+      - name: instituicao_id
+        description: Instituição da bolsa.
+      - name: pesquisador_id
+        description: Pesquisador bolsista.
+
+  - name: pesquisadores
+    label: Pesquisadores
+    description: Pesquisadores bolsistas, identificados pelo currículo Lattes.
+    synonyms: [pesquisador, bolsista, cientista]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: nome
+        label: Nome
+      - name: lattes
+        label: Lattes
+        description: Identificador do currículo Lattes (CNPq).
+      - name: cidade
+        label: Cidade
+        description: Cidade do pesquisador.
+      - name: territorio_identidade_id
+        description: Território de identidade da cidade do pesquisador.
+      - name: status
+        label: Situação
+        description: Situação do cadastro do pesquisador.
+        values:
+          - {value: APROVADO}
+          - {value: PENDENTE}
+          - {value: REJEITADO}
+
+  - name: projetos
+    label: Projetos
+    description: Projetos de pesquisa aos quais as bolsas estão vinculadas.
+    synonyms: [projeto, pesquisa]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: nome
+        label: Título
+      - name: resumo
+        label: Resumo
+      - name: area_conhecimento_id
+        description: Área do conhecimento do projeto, em qualquer nível da árvore.
+
+  - name: instituicoes
+    label: Instituições
+    description: Instituições de ensino e pesquisa que recebem as bolsas.
+    synonyms: [instituição, universidade, IES]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: nome
+        label: Nome
+      - name: sigla
+        label: Sigla
+        description: Sigla da instituição, como UFBA ou UESC.
+      - name: cep
+        label: CEP
+
+  - name: departamentos
+    label: Departamentos
+    description: Departamentos das instituições.
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: nome
+        label: Nome
+      - name: unidade
+        label: Unidade (texto)
+        description: Nome da unidade como veio da origem.
+      - name: cep
+        label: CEP
+      - name: instituicao_id
+        description: Instituição do departamento.
+      - name: grande_area_id
+        description: Grande área do conhecimento do departamento.
+
+  - name: unidades
+    label: Unidades
+    description: Unidades acadêmicas (campi, centros, institutos).
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: nome
+        label: Nome
+      - name: cep
+        label: CEP
+
+  - name: departamentos_unidades
+    description: Associação N:N entre departamentos e unidades.
+    columns:
+      - name: departamento_id
+      - name: unidade_id
+
+  - name: areas_conhecimento
+    label: Áreas do conhecimento
+    description: >-
+      Árvore de áreas do conhecimento (tabela do CNPq). A grande área não tem
+      pai; a área aponta para a grande área; a subárea aponta para a área.
+    synonyms: [área, grande área, subárea, disciplina]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: termo
+        label: Nome
+      - name: termo_normalizado
+        description: Nome sem acentos e em minúsculas, para buscas.
+      - name: tipo
+        label: Nível
+        values:
+          - {value: grande_area, description: grande área (raiz)}
+          - {value: area, description: área}
+          - {value: subarea, description: subárea}
+      - name: pai_id
+        description: Nível imediatamente acima na árvore; nulo nas grandes áreas.
+
+  - name: palavras_chave
+    label: Palavras-chave
+    description: Palavras-chave dos projetos.
+    synonyms: [palavra-chave, tema, assunto]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: termo
+        label: Termo
+      - name: termo_normalizado
+        description: Termo sem acentos e em minúsculas, para buscas.
+
+  - name: projetos_palavras_chave
+    description: Associação N:N entre projetos e palavras-chave.
+    columns:
+      - name: projeto_id
+      - name: palavra_chave_id
+
+  - name: territorios_identidade
+    label: Territórios de identidade
+    description: Territórios de identidade em que o governo da Bahia divide o estado.
+    synonyms: [território, região]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: nome
+        label: Nome
+      - name: nome_normalizado
+        description: Nome sem acentos e em minúsculas, para buscas.
+
+  - name: mv_bolsas_metricas
+    label: Métricas de bolsas
+    description: >-
+      Totais de bolsas já agregados por ano de início, modalidade, instituição,
+      cidade e território do pesquisador e área do conhecimento. Já exclui as
+      bolsas DESCARTADA. Pode estar defasada em relação às tabelas até ser
+      atualizada pelo módulo de fomento.
+    synonyms: [indicadores, totais, estatísticas]
+    columns:
+      - name: ano_inicio
+        label: Ano de início
+      - name: modalidade
+        label: Modalidade
+      - name: instituicao_id
+        description: Instituição.
+      - name: instituicao_nome
+        label: Instituição
+      - name: instituicao_sigla
+        label: Sigla da instituição
+      - name: cidade
+        label: Cidade do pesquisador
+      - name: territorio_identidade_id
+        description: Território de identidade.
+      - name: territorio_identidade
+        label: Território de identidade
+      - name: grande_area
+        label: Grande área
+      - name: area
+        label: Área
+      - name: subarea
+        label: Subárea
+      - name: quantidade
+        label: Quantidade
+        description: Número de bolsas no grupo; some esta coluna para obter totais.
+
+relationships:
+  - from: bolsas.pesquisador_id
+    to: pesquisadores.id
+    description: Pesquisador bolsista.
+  - from: bolsas.projeto_id
+    to: projetos.id
+    description: Projeto da bolsa.
+  - from: bolsas.instituicao_id
+    to: instituicoes.id
+    description: Instituição da bolsa.
+  - from: pesquisadores.territorio_identidade_id
+    to: territorios_identidade.id
+    description: Território de identidade do pesquisador.
+  - from: projetos.area_conhecimento_id
+    to: areas_conhecimento.id
+    description: Área do conhecimento do projeto.
+  - from: areas_conhecimento.pai_id
+    to: areas_conhecimento.id
+    description: Nível acima na árvore de áreas.
+  # A view materializada não tem chaves estrangeiras: relacionamentos manuais.
+  - from: mv_bolsas_metricas.instituicao_id
+    to: instituicoes.id
+    description: Instituição do grupo de métricas.
+  - from: mv_bolsas_metricas.territorio_identidade_id
+    to: territorios_identidade.id
+    description: Território do grupo de métricas.

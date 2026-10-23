@@ -3,8 +3,17 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, TypeDecorator
-from sqlalchemy.orm import Mapped, mapped_column, registry
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    TypeDecorator,
+    UniqueConstraint,
+    false,
+)
+from sqlalchemy.orm import Mapped, mapped_column, registry, relationship
 
 table_registry = registry()
 
@@ -70,3 +79,193 @@ class Message:
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime, init=False, default_factory=utcnow
     )
+
+
+# --- Catálogo de fontes de dados ---------------------------------------------
+# Descreve bancos externos para a IA. Campos técnicos (tipo, presença, chaves)
+# vêm da sincronização com a origem; os editoriais (rótulos, descrições,
+# interruptores) vêm de pessoas e nunca são sobrescritos automaticamente.
+
+
+class EntityKind(StrEnum):
+    TABLE = 'table'
+    VIEW = 'view'
+    MATERIALIZED_VIEW = 'materialized_view'
+
+
+class ColumnAccess(StrEnum):
+    FULL = 'full'
+    AGGREGATE = 'aggregate'
+
+
+class RelationshipOrigin(StrEnum):
+    FOREIGN_KEY = 'foreign_key'
+    MANUAL = 'manual'
+
+
+class SchemaStatus(StrEnum):
+    UNKNOWN = 'unknown'
+    UP_TO_DATE = 'up_to_date'
+    OUTDATED = 'outdated'
+    ERROR = 'error'
+
+
+@table_registry.mapped_as_dataclass(kw_only=True)
+class CatalogDataSource:
+    __tablename__ = 'catalog_datasources'
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    # Nome da variável de ambiente com a URL de conexão, nunca a URL em si.
+    connection_env: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    instructions: Mapped[str | None] = mapped_column(Text, default=None)
+    schemas: Mapped[list[str]] = mapped_column(
+        JSON, default_factory=lambda: ['public']
+    )
+    enabled: Mapped[bool] = mapped_column(default=True)
+    # Liga a sincronização automática quando a verificação detecta defasagem.
+    auto_sync: Mapped[bool] = mapped_column(
+        default=False, server_default=false()
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime, default=None
+    )
+    # Estado da defasagem: a impressão digital vem da última sincronização;
+    # a verificação compara e registra o diff (`drift`) ou o erro.
+    schema_fingerprint: Mapped[str | None] = mapped_column(
+        String(64), default=None
+    )
+    schema_status: Mapped[SchemaStatus] = mapped_column(
+        String(20),
+        default=SchemaStatus.UNKNOWN,
+        server_default=SchemaStatus.UNKNOWN.value,
+    )
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime, default=None
+    )
+    drift: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    check_error: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, init=False, default_factory=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, init=False, default_factory=utcnow, onupdate=utcnow
+    )
+
+
+@table_registry.mapped_as_dataclass(kw_only=True)
+class CatalogEntity:
+    __tablename__ = 'catalog_entities'
+    __table_args__ = (
+        UniqueConstraint('datasource_id', 'schema_name', 'name'),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        init=False, primary_key=True, default_factory=uuid4
+    )
+    datasource_id: Mapped[str] = mapped_column(
+        ForeignKey('catalog_datasources.id', ondelete='CASCADE'), index=True
+    )
+    schema_name: Mapped[str] = mapped_column(String(128))
+    name: Mapped[str] = mapped_column(String(128))
+    # Preenchido pela sincronização; None enquanto só existe no seed.
+    kind: Mapped[str | None] = mapped_column(String(30), default=None)
+    label: Mapped[str | None] = mapped_column(String(200), default=None)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    synonyms: Mapped[list[str]] = mapped_column(JSON, default_factory=list)
+    visible: Mapped[bool] = mapped_column(default=False)
+    queryable: Mapped[bool] = mapped_column(default=False)
+    present: Mapped[bool] = mapped_column(default=False)
+    columns: Mapped[list['CatalogColumn']] = relationship(
+        init=False,
+        cascade='all, delete-orphan',
+        passive_deletes=True,
+        lazy='selectin',
+        order_by='CatalogColumn.position',
+    )
+
+    @property
+    def qualified_name(self) -> str:
+        return f'{self.schema_name}.{self.name}'
+
+
+@table_registry.mapped_as_dataclass(kw_only=True)
+class CatalogColumn:
+    __tablename__ = 'catalog_columns'
+    __table_args__ = (UniqueConstraint('entity_id', 'name'),)
+
+    id: Mapped[UUID] = mapped_column(
+        init=False, primary_key=True, default_factory=uuid4
+    )
+    entity_id: Mapped[UUID] = mapped_column(
+        ForeignKey('catalog_entities.id', ondelete='CASCADE'), index=True
+    )
+    name: Mapped[str] = mapped_column(String(128))
+    data_type: Mapped[str | None] = mapped_column(String(100), default=None)
+    nullable: Mapped[bool | None] = mapped_column(default=None)
+    primary_key: Mapped[bool] = mapped_column(default=False)
+    position: Mapped[int | None] = mapped_column(default=None)
+    # Valores do tipo enum na origem (técnico); None se a coluna não é enum.
+    enum_values: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    label: Mapped[str | None] = mapped_column(String(200), default=None)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    synonyms: Mapped[list[str]] = mapped_column(JSON, default_factory=list)
+    # Valores conhecidos: [{"value": ..., "description": ...}].
+    values: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default_factory=list
+    )
+    visible: Mapped[bool] = mapped_column(default=False)
+    access: Mapped[ColumnAccess] = mapped_column(
+        String(20), default=ColumnAccess.FULL
+    )
+    present: Mapped[bool] = mapped_column(default=False)
+
+    def _described(self) -> set[str]:
+        return {
+            str(item['value'])
+            for item in self.values
+            if item.get('description')
+        }
+
+    @property
+    def undescribed_values(self) -> list[str]:
+        """Valores do enum na origem ainda sem descrição editorial."""
+        described = self._described()
+        return [v for v in self.enum_values or [] if v not in described]
+
+    @property
+    def obsolete_values(self) -> list[str]:
+        """Valores descritos que não existem mais no enum da origem."""
+        if self.enum_values is None:
+            return []
+        current = set(self.enum_values)
+        return [
+            str(item['value'])
+            for item in self.values
+            if str(item['value']) not in current
+        ]
+
+
+@table_registry.mapped_as_dataclass(kw_only=True)
+class CatalogRelationship:
+    __tablename__ = 'catalog_relationships'
+
+    id: Mapped[UUID] = mapped_column(
+        init=False, primary_key=True, default_factory=uuid4
+    )
+    datasource_id: Mapped[str] = mapped_column(
+        ForeignKey('catalog_datasources.id', ondelete='CASCADE'), index=True
+    )
+    from_entity_id: Mapped[UUID] = mapped_column(
+        ForeignKey('catalog_entities.id', ondelete='CASCADE')
+    )
+    from_columns: Mapped[list[str]] = mapped_column(JSON)
+    to_entity_id: Mapped[UUID] = mapped_column(
+        ForeignKey('catalog_entities.id', ondelete='CASCADE')
+    )
+    to_columns: Mapped[list[str]] = mapped_column(JSON)
+    origin: Mapped[RelationshipOrigin] = mapped_column(String(20))
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    present: Mapped[bool] = mapped_column(default=True)
