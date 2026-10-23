@@ -175,6 +175,10 @@ As variáveis são lidas do ambiente e do `.env`.
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Endpoint OTLP/HTTP do Collector | `http://localhost:4318` |
 | `OPENINFERENCE_HIDE_INPUTS` / `OPENINFERENCE_HIDE_OUTPUTS` | Oculta o texto das mensagens nos traces (LGPD) | `false` |
 | `CATALOG_CHECK_INTERVAL_SECONDS` | Intervalo da verificação de defasagem do catálogo (também roda ao iniciar). `0` desliga | `3600` |
+| `QUERY_MAX_ROWS` | Limite máximo de linhas devolvidas por consulta | `100` |
+| `QUERY_TIMEOUT_SECONDS` | Limite de tempo de execução por consulta na origem | `15` |
+| `QUERY_MAX_PER_CALL` | Máximo de consultas SQL executadas por chamada do modelo | `4` |
+| `MARIA_AGENT_MAX_MODEL_CALLS` | Orçamento máximo de chamadas ao modelo por resposta da Maria | `3` |
 | `FOMENTO_DATABASE_URL` | URL do banco do fomento, com driver assíncrono (`postgresql+psycopg://…`). O nome da variável é definido por fonte no catálogo | — |
 
 ---
@@ -222,7 +226,7 @@ O corpo de envio aceita **somente** `content` (1 a 10.000 caracteres). Campos ex
 ]
 ```
 
-Hoje a Maria produz blocos `text`. `chart` e `table` já fazem parte do contrato (estão no OpenAPI), então o frontend pode ser preparado desde já.
+Hoje a Maria produz blocos `text`, `chart` e `table` a partir de consultas a fontes de dados ativas do catálogo.
 
 ### Streaming (Server-Sent Events)
 
@@ -231,7 +235,8 @@ Hoje a Maria produz blocos `text`. `chart` e `table` já fazem parte do contrato
 | Evento | Dados | Quando |
 |---|---|---|
 | `message.user` | `MessagePublic` da pergunta | Logo no início |
-| `content.delta` | `{"index": 0, "type": "text", "text": "…"}` | A cada fragmento gerado (`index` é a posição do bloco no `content` final) |
+| `activity` | `{"kind": "query", "source": "…", "description": "…"}` | Antes de cada consulta a uma fonte de dados |
+| `content.delta` | Fragmento de texto (`type: "text", text: "…"`) ou bloco inteiro (`type: "chart"` / `"table"`, `block: {…}`) | Conforme texto é gerado ou blocos de dados são entregues |
 | `message.assistant` | `MessagePublic` da resposta, **já persistida** | Ao final |
 | `error` | `{"detail": "…"}` | Se o modelo falhar depois de iniciado o stream; nada é gravado |
 
@@ -272,7 +277,7 @@ banco do fomento ──sincronizar──▶  catálogo (banco da Maria)  ◀─�
 |---|---|
 | **Fonte** | Nome, descrição, **instruções de negócio** para a IA, variável de ambiente com a conexão (nunca a URL), schemas a ler e liga/desliga |
 | **Entidade** (tabela, view ou view materializada) | Rótulo, descrição, sinônimos, **visível** (o modelo enxerga) e **consultável** (o modelo pode consultar). Consultável exige visível |
-| **Coluna** | Rótulo, descrição, sinônimos, valores conhecidos com significado, **visível** e **acesso**: `full` (pode ler valores) ou `aggregate` (só filtrar, agrupar e contar; para dados pessoais) |
+| **Coluna** | Rótulo, descrição, sinônimos, valores conhecidos com significado, **visível**, **pesquisável** (habilita busca textual via `MATCH_TEXT`) e **acesso**: `full` (pode ler valores) ou `aggregate` (só filtrar, agrupar e contar; para dados pessoais) |
 | **Relacionamento** | Liga/desliga e descrição. Vêm das chaves estrangeiras ou, quando não há chave (views), do YAML |
 
 **Dados técnicos e editoriais.** A sincronização só atualiza tipo, chaves, ordem e presença. Rótulos, descrições e interruptores vêm de pessoas e nunca são sobrescritos. O que é novo na origem entra **oculto**; o que sumiu fica **ausente**, com a configuração guardada, e volta se reaparecer.

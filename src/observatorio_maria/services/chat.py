@@ -3,7 +3,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends
 from langchain_core.callbacks import BaseCallbackHandler
@@ -13,30 +13,46 @@ from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
     SystemMessage,
+    ToolMessage,
 )
 from openinference.instrumentation import OITracer, using_session
+from openinference.semconv.trace import SpanAttributes
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from observatorio_maria.catalog.context import render_context
+from observatorio_maria.catalog.sync import (
+    load_entities,
+    load_relationships,
+)
 from observatorio_maria.database import get_session
-from observatorio_maria.llm.prompts import MARIA_SYSTEM_PROMPT
+from observatorio_maria.llm.prompts import build_system_prompt
 from observatorio_maria.llm.registry import (
     ModelRegistry,
     ModelTier,
     get_model_registry,
 )
 from observatorio_maria.models import (
+    CatalogDataSource,
     Conversation,
     Message,
     MessageRole,
 )
 from observatorio_maria.observability.genai import (
+    AgentMetrics,
+    get_agent_metrics,
     get_llm_callbacks,
     get_tracer,
 )
+from observatorio_maria.query.execution import (
+    ResultStore,
+    sanitize_purpose,
+)
+from observatorio_maria.query.tool import QueryRunner
 from observatorio_maria.schemas import TextBlock
+from observatorio_maria.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +67,55 @@ class ModelInvocationError(Exception):
     """O modelo de linguagem falhou ao gerar a resposta."""
 
 
-def blocks_to_text(blocks: list[dict]) -> str:
-    """Converte blocos persistidos no texto enviado ao modelo."""
-    parts = [
-        block['text'] if block.get('type') == 'text' else json.dumps(block)
-        for block in blocks
+def summarize_chart(block: dict[str, Any]) -> str:
+    """Resume bloco de gráfico para o histórico do modelo."""
+    title = block.get('title') or 'Sem título'
+    series = block.get('series') or []
+    if isinstance(series, list):
+        labels = [
+            s.get('label', s.get('key', '')) if isinstance(s, dict) else str(s)
+            for s in series
+        ]
+        series_str = ', '.join(filter(None, labels))
+    else:
+        series_str = str(series)
+    data = block.get('data') or []
+    return (
+        f'[Gráfico: {title} | Séries: {series_str} | '
+        f'Total de registros: {len(data)}]'
+    )
+
+
+def summarize_table(block: dict[str, Any]) -> str:
+    """Resume bloco de tabela para o histórico do modelo."""
+    title = block.get('title') or 'Tabela'
+    columns = block.get('columns') or []
+    labels = [
+        c.get('label', c.get('key', '')) if isinstance(c, dict) else str(c)
+        for c in columns
     ]
-    return '\n\n'.join(parts)
+    col_str = ', '.join(filter(None, labels))
+    rows = block.get('rows') or []
+    return (
+        f'[Tabela: {title} | Colunas: {col_str} | '
+        f'Total de linhas: {len(rows)}]'
+    )
+
+
+def blocks_to_text(blocks: list[dict[str, Any]]) -> str:
+    """Converte blocos persistidos no texto enviado ao modelo."""
+    parts = []
+    for block in blocks:
+        btype = block.get('type')
+        if btype == 'text':
+            parts.append(block.get('text', ''))
+        elif btype == 'chart':
+            parts.append(summarize_chart(block))
+        elif btype == 'table':
+            parts.append(summarize_table(block))
+        else:
+            parts.append(json.dumps(block))
+    return '\n\n'.join(p for p in parts if p)
 
 
 def to_langchain_message(message: Message) -> BaseMessage:
@@ -86,17 +144,51 @@ async def get_history(
     return list(result.all())
 
 
+async def get_consultable_sources_and_contexts(
+    session: AsyncSession,
+) -> tuple[list[CatalogDataSource], list[str]]:
+    """Carrega fontes com entidades visíveis, consultáveis e presentes."""
+    datasources = list(
+        await session.scalars(
+            select(CatalogDataSource)
+            .where(CatalogDataSource.enabled.is_(True))
+            .order_by(CatalogDataSource.id)
+        )
+    )
+    consultable_ds = []
+    contexts = []
+    for ds in datasources:
+        entities = await load_entities(session, ds.id)
+        has_queryable = any(
+            e.visible and e.queryable and e.present for e in entities
+        )
+        if has_queryable:
+            consultable_ds.append(ds)
+            relationships = await load_relationships(session, ds.id)
+            contexts.append(render_context(ds, entities, relationships))
+    return consultable_ds, contexts
+
+
 @dataclass(frozen=True)
 class UserMessageCreated:
     message: Message
 
 
 @dataclass(frozen=True)
+class Activity:
+    kind: str
+    source: str
+    description: str
+
+
+@dataclass(frozen=True)
 class ContentDelta:
-    """Fragmento do bloco `index` do conteúdo da resposta."""
+    """Fragmento de texto ou bloco completo da resposta."""
 
     index: int
-    text: str
+    text: str | None = None
+    type: str = 'text'
+    block: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -104,7 +196,9 @@ class AssistantMessageCompleted:
     message: Message
 
 
-ChatEvent = UserMessageCreated | ContentDelta | AssistantMessageCompleted
+ChatEvent = (
+    UserMessageCreated | Activity | ContentDelta | AssistantMessageCompleted
+)
 
 
 class _ModelStep:
@@ -141,19 +235,23 @@ class _ModelStep:
 
 
 class ChatService:
-    def __init__(
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         session: AsyncSession,
         registry: ModelRegistry,
         tracer: OITracer,
         callbacks: list[BaseCallbackHandler],
+        settings: Settings | None = None,
+        agent_metrics: AgentMetrics | None = None,
     ):
         self.session = session
         self.registry = registry
         self.tracer = tracer
         self.callbacks = callbacks
+        self.settings = settings or Settings()
+        self.agent_metrics = agent_metrics or get_agent_metrics()
 
-    async def stream_message(
+    async def stream_message(  # noqa: C901, PLR0912, PLR0914, PLR0915, PLR1702
         self, conversation: Conversation, content: str
     ) -> AsyncIterator[ChatEvent]:
         """Gera a resposta em partes; é o único fluxo de geração da Maria.
@@ -163,6 +261,17 @@ class ChatService:
         registros parciais.
         """
         registered = self.registry.get(CHAT_MODEL_TIER)
+        consultable_sources, contexts = (
+            await get_consultable_sources_and_contexts(self.session)
+        )
+        has_sources = len(consultable_sources) > 0
+        max_calls = (
+            self.settings.MARIA_AGENT_MAX_MODEL_CALLS if has_sources else 1
+        )
+
+        system_prompt = build_system_prompt(
+            source_contexts=contexts if has_sources else None
+        )
         history = await get_history(self.session, conversation)
 
         user_message = Message(
@@ -170,66 +279,156 @@ class ChatService:
             role=MessageRole.USER,
             content=[TextBlock(text=content).model_dump()],
         )
-        prompt = [
-            SystemMessage(MARIA_SYSTEM_PROMPT),
-            *(to_langchain_message(message) for message in history),
-            HumanMessage(content),
-        ]
         yield UserMessageCreated(user_message)
 
-        # Span de cadeia que agrupa o caminho da IA nesta resposta; a sessão
-        # (id da conversa) permite ver a conversa inteira no Phoenix.
+        result_store = ResultStore()
+        query_runner = QueryRunner(
+            self.session,
+            result_store,
+            max_rows=self.settings.QUERY_MAX_ROWS,
+            timeout_seconds=self.settings.QUERY_TIMEOUT_SECONDS,
+            max_per_call=self.settings.QUERY_MAX_PER_CALL,
+        )
+        query_tools = query_runner.build_query_tools() if has_sources else []
+        presentation_tools = (
+            query_runner.build_presentation_tools() if has_sources else []
+        )
+
+        messages: list[BaseMessage] = [
+            SystemMessage(system_prompt),
+            *(to_langchain_message(m) for m in history),
+            HumanMessage(content),
+        ]
+
         session_id = str(conversation.id)
         with using_session(session_id):
             span = self.tracer.start_span(
                 'maria.chat', openinference_span_kind='chain'
             )
         span.set_input(content)
-        step = _ModelStep(
-            span,
-            session_id,
-            registered.model.astream(
-                prompt,
-                config={
-                    'callbacks': self.callbacks,
-                    'metadata': {'model_tier': str(registered.tier)},
-                },
-            ),
-        )
 
-        response: AIMessageChunk | None = None
+        accumulated_text = ''
+        call_count = 0
+
         try:
-            while (chunk := await step.next_chunk()) is not None:
-                response = chunk if response is None else response + chunk
-                if chunk.text:
-                    yield ContentDelta(index=0, text=chunk.text)
-        except ModelInvocationError:
-            span.end()
-            raise
-        except BaseException:
-            # Cancelamento ou fechamento do stream pelo cliente.
-            span.set_status(
-                Status(StatusCode.ERROR, 'Resposta interrompida pelo cliente')
-            )
-            span.end()
-            await step.close()
-            raise
+            while call_count < max_calls:
+                call_count += 1
+                is_last_call = call_count == max_calls
+                calls_left = max_calls - call_count
+                query_runner.reset_call_budget(calls_left=calls_left)
 
-        text = response.text if response is not None else ''
-        span.set_output(text)
+                turn_messages = list(messages)
+                if is_last_call and has_sources and call_count > 1:
+                    turn_messages.append(
+                        SystemMessage(
+                            'Esta é a última chamada do orçamento. Apresente '
+                            'a resposta final com base nos dados obtidos.'
+                        )
+                    )
+
+                if not has_sources:
+                    active_model = registered.model
+                elif is_last_call:
+                    active_model = (
+                        registered.model.bind_tools(presentation_tools)
+                        if hasattr(registered.model, 'bind_tools')
+                        else registered.model
+                    )
+                else:
+                    active_model = (
+                        registered.model.bind_tools(query_tools)
+                        if hasattr(registered.model, 'bind_tools')
+                        else registered.model
+                    )
+
+                step = _ModelStep(
+                    span,
+                    session_id,
+                    active_model.astream(
+                        turn_messages,
+                        config={
+                            'callbacks': self.callbacks,
+                            'metadata': {'model_tier': str(registered.tier)},
+                        },
+                    ),
+                )
+
+                turn_chunk: AIMessageChunk | None = None
+                try:
+                    while (chunk := await step.next_chunk()) is not None:
+                        turn_chunk = (
+                            chunk if turn_chunk is None else turn_chunk + chunk
+                        )
+                        if chunk.text:
+                            accumulated_text += chunk.text
+                            yield ContentDelta(
+                                index=0, text=chunk.text, type='text'
+                            )
+                except ModelInvocationError:
+                    span.end()
+                    raise
+                except BaseException:
+                    span.set_status(
+                        Status(
+                            StatusCode.ERROR,
+                            'Resposta interrompida pelo cliente',
+                        )
+                    )
+                    span.end()
+                    await step.close()
+                    raise
+
+                ai_message = turn_chunk or AIMessage('')
+                messages.append(ai_message)
+
+                tool_calls = getattr(ai_message, 'tool_calls', None) or []
+                if not tool_calls:
+                    break
+
+                has_query = any(
+                    tc.get('name') == 'query_data' for tc in tool_calls
+                )
+                for tc in tool_calls:
+                    tool_msg, activity = await self._execute_tool_call(
+                        tc, query_runner, span, session_id
+                    )
+                    if activity:
+                        yield activity
+                    messages.append(tool_msg)
+
+                if not has_query:
+                    break
+        finally:
+            await query_runner.close()
+
+        # Emite blocos de apresentação que foram acumulados
+        for i, block in enumerate(query_runner.pending_blocks, start=1):
+            yield ContentDelta(index=i, type=block['type'], block=block)
+
+        content_blocks: list[dict[str, Any]] = []
+        if accumulated_text:
+            content_blocks.append(TextBlock(text=accumulated_text).model_dump())
+        content_blocks.extend(query_runner.pending_blocks)
+        if not content_blocks:
+            content_blocks = [TextBlock(text='').model_dump()]
+
+        self.agent_metrics.record_model_calls(call_count)
+
+        span.set_output(accumulated_text or json.dumps(content_blocks))
         with trace.use_span(span, end_on_exit=True):
             logger.info(
                 'Resposta gerada',
                 extra={
                     'conversation.id': str(conversation.id),
                     'model.tier': str(registered.tier),
+                    'agent.model_calls': call_count,
                 },
             )
 
         assistant_message = Message(
             conversation_id=conversation.id,
             role=MessageRole.ASSISTANT,
-            content=[TextBlock(text=text).model_dump()],
+            content=content_blocks,
             model_tier=registered.tier,
             model_name=registered.name,
         )
@@ -240,6 +439,99 @@ class ChatService:
         self.session.add_all([user_message, assistant_message])
         await self.session.commit()
         yield AssistantMessageCompleted(assistant_message)
+
+    async def _execute_tool_call(  # noqa: PLR0912
+        self,
+        tc: dict[str, Any],
+        query_runner: QueryRunner,
+        span: Any,
+        session_id: str,
+    ) -> tuple[ToolMessage, Activity | None]:
+        tc_name = tc.get('name')
+        tc_args = tc.get('args') or {}
+        tc_id = tc.get('id', 'call_id')
+
+        if tc_name == 'show_chart':
+            res = query_runner.show_chart(
+                result_id=tc_args.get('result_id', ''),
+                chart_type=tc_args.get('chart_type', ''),
+                title=tc_args.get('title', ''),
+                x=tc_args.get('x', ''),
+                series=tc_args.get('series', []),
+            )
+            return (
+                ToolMessage(content=json.dumps(res), tool_call_id=tc_id),
+                None,
+            )
+
+        if tc_name == 'show_table':
+            res = query_runner.show_table(
+                result_id=tc_args.get('result_id', ''),
+                columns=tc_args.get('columns', []),
+                title=tc_args.get('title'),
+            )
+            return (
+                ToolMessage(content=json.dumps(res), tool_call_id=tc_id),
+                None,
+            )
+
+        source_id = tc_args.get('source', '')
+        ds = await query_runner._get_datasource(source_id)
+        source_name = ds.name if ds else source_id
+        purpose = sanitize_purpose(tc_args.get('purpose'), source_name)
+        activity = Activity(
+            kind='query', source=source_name, description=purpose
+        )
+
+        with (
+            trace.use_span(span, end_on_exit=False),
+            using_session(session_id),
+        ):
+            tool_span = self.tracer.start_span(
+                'query_data', openinference_span_kind='tool'
+            )
+        tool_span.set_attribute(SpanAttributes.TOOL_NAME, 'query_data')
+        tool_span.set_input(tc_args.get('sql', ''))
+        tool_span.set_attribute('datasource.id', source_id)
+
+        outcome = 'executed'
+        try:
+            res = await query_runner.query_data(
+                source_id,
+                tc_args.get('sql', ''),
+                purpose=tc_args.get('purpose', ''),
+            )
+            if 'error' in res:
+                err = res['error']
+                if 'Tempo limite' in err:
+                    outcome = 'timeout'
+                elif 'indisponível' in err or 'conexão' in err:
+                    outcome = 'failed'
+                else:
+                    outcome = 'rejected'
+                tool_span.set_status(Status(StatusCode.ERROR, err))
+                tool_span.set_attribute('query.error', err)
+            else:
+                tool_span.set_attribute(
+                    'query.row_count', len(res.get('rows', []))
+                )
+                tool_span.set_attribute(
+                    'query.truncated', res.get('truncated', False)
+                )
+            tool_span.set_output(json.dumps(res))
+            tool_msg = ToolMessage(content=json.dumps(res), tool_call_id=tc_id)
+        except Exception as exc:  # noqa: BLE001
+            outcome = 'failed'
+            tool_span.set_status(Status(StatusCode.ERROR, str(exc)))
+            tool_span.set_output(str(exc))
+            tool_msg = ToolMessage(
+                content=json.dumps({'error': str(exc)}), tool_call_id=tc_id
+            )
+        finally:
+            tool_span.end()
+            self.agent_metrics.record_query(outcome=outcome, source=source_id)
+
+        return tool_msg, activity
 
     async def send_message(
         self, conversation: Conversation, content: str
@@ -262,5 +554,8 @@ def get_chat_service(
     callbacks: Annotated[
         list[BaseCallbackHandler], Depends(get_llm_callbacks)
     ],
+    agent_metrics: Annotated[AgentMetrics, Depends(get_agent_metrics)],
 ) -> ChatService:
-    return ChatService(session, registry, tracer, callbacks)
+    return ChatService(
+        session, registry, tracer, callbacks, agent_metrics=agent_metrics
+    )

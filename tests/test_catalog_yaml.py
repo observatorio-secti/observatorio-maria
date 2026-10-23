@@ -36,6 +36,7 @@ entities:
     synonyms: [fomento]
     columns:
       - name: status
+        searchable: true
         values:
           - {value: REGULAR, description: Bolsa válida}
   - name: pesquisadores
@@ -85,6 +86,7 @@ async def test_seed_creates_datasource_entities_columns(session, document):
     assert bolsas.queryable
     assert not bolsas.present  # só existe na origem após sincronizar
     assert bolsas.synonyms == ['fomento']
+    assert bolsas.columns[0].searchable is True
     assert bolsas.columns[0].values == [
         {'value': 'REGULAR', 'description': 'Bolsa válida'}
     ]
@@ -93,6 +95,7 @@ async def test_seed_creates_datasource_entities_columns(session, document):
     assert not pesquisadores.queryable
     columns = {c.name: c for c in pesquisadores.columns}
     assert columns['nome'].access == ColumnAccess.AGGREGATE
+    assert columns['nome'].searchable is False
     assert not columns['lattes'].visible
 
     relationships = await load_relationships(session, 'origem')
@@ -200,6 +203,7 @@ async def test_export_round_trip(session, document, source_db):
     # manteve o manual (a view não tem chave estrangeira).
     assert 'Pesquisador bolsista' in text
     assert 'bolsas_por_status.status' in text
+    assert 'searchable: true' in text
 
 
 def test_seed_cli_reports_invalid_file(tmp_path, capsys):

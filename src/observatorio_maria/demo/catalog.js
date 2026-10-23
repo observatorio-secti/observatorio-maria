@@ -370,7 +370,7 @@ function renderColumnRows(column) {
   const rows = [renderColumnRow(column)];
   if (catalog.expanded.has(column.id)) {
     const tr = el('tr', { class: 'values-row' });
-    const td = el('td', { colspan: 5 });
+    const td = el('td', { colspan: 6 });
     td.append(renderValuesEditor(column));
     tr.append(td);
     rows.push(tr);
@@ -415,6 +415,13 @@ function renderColumnRow(column) {
   const accessCell = el('td');
   accessCell.append(access);
 
+  const searchable = el('td');
+  searchable.append(
+    switchInput(column.searchable, (checked) => patchColumn(column, { searchable: checked }), {
+      label: `Pesquisável: ${column.name}`,
+    })
+  );
+
   const description = el('input', {
     'aria-label': `Descrição: ${column.name}`,
     placeholder: column.label ?? 'Descreva a coluna…',
@@ -424,7 +431,7 @@ function renderColumnRow(column) {
   const descriptionCell = el('td');
   descriptionCell.append(description);
 
-  tr.append(visible, accessCell, descriptionCell);
+  tr.append(visible, accessCell, searchable, descriptionCell);
   return tr;
 }
 

@@ -53,6 +53,8 @@ def _column_line(column: CatalogColumn) -> str:
             '**Somente agregação**: use em filtros, agrupamentos e '
             'contagens, nunca liste valores individuais'
         )
+    if column.searchable:
+        notes.append('aceita busca textual')
     values = _known_values(column)
     if values:
         notes.append(f'Valores: {"; ".join(_value(v) for v in values)}')

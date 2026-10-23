@@ -123,3 +123,23 @@ async def test_disabled_datasource_has_empty_context(
     await session.commit()
 
     assert not await context(session, datasource)
+
+
+async def test_searchable_column_rendered_in_context(
+    session, datasource, synced
+):
+    bolsas = synced['bolsas']
+    status = bolsas.columns[1]
+    status.searchable = True
+
+    # Coluna oculta mas pesquisável não deve aparecer
+    pesquisadores = synced['pesquisadores']
+    lattes = pesquisadores.columns[2]
+    lattes.searchable = True
+    lattes.visible = False
+    await session.commit()
+
+    text = await context(session, datasource)
+
+    assert '- `status` (VARCHAR(20)). aceita busca textual' in text
+    assert 'lattes' not in text

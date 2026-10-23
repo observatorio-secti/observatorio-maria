@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from observatorio_maria.database import get_session
 from observatorio_maria.models import Conversation
 from observatorio_maria.schemas import (
+    ActivityPublic,
     ChatExchange,
     ContentDeltaPublic,
     ConversationCreate,
@@ -24,6 +25,7 @@ from observatorio_maria.schemas import (
     StreamError,
 )
 from observatorio_maria.services.chat import (
+    Activity,
     AssistantMessageCompleted,
     ChatEvent,
     ChatService,
@@ -137,10 +139,24 @@ def to_server_sent_event(event: ChatEvent) -> ServerSentEvent:
                 event='message.user',
                 data=MessagePublic.model_validate(message),
             )
-        case ContentDelta(index=index, text=text):
+        case Activity(kind=kind, source=source, description=description):
+            return ServerSentEvent(
+                event='activity',
+                data=ActivityPublic(
+                    kind=kind, source=source, description=description
+                ),
+            )
+        case ContentDelta(
+            index=index, text=text, type=delta_type, block=block
+        ):
             return ServerSentEvent(
                 event='content.delta',
-                data=ContentDeltaPublic(index=index, text=text),
+                data=ContentDeltaPublic(
+                    index=index,
+                    type=delta_type or 'text',
+                    text=text,
+                    block=block,
+                ),
             )
         case AssistantMessageCompleted(message=message):
             return ServerSentEvent(

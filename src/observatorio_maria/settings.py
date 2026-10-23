@@ -1,5 +1,6 @@
 from typing import Any
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_MODEL = 'openai:gpt-6-luna'
@@ -18,6 +19,12 @@ class Settings(BaseSettings):
     DEMO_ENABLED: bool = True
     # Intervalo da verificação de defasagem do catálogo; 0 desliga.
     CATALOG_CHECK_INTERVAL_SECONDS: float = 3600
+
+    # Consultas a fontes do catálogo e orçamento do agente.
+    QUERY_MAX_ROWS: int = Field(100, ge=1)
+    QUERY_TIMEOUT_SECONDS: float = Field(15.0, gt=0)
+    QUERY_MAX_PER_CALL: int = Field(4, ge=1)
+    MARIA_AGENT_MAX_MODEL_CALLS: int = Field(3, ge=1)
 
     # Modelos por nível no formato "provedor:modelo" (init_chat_model).
     # Os *_KWARGS são repassados ao construtor do modelo (JSON no .env).

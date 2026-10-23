@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 from itertools import repeat
@@ -9,8 +10,17 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import (
     GenericFakeChatModel,
 )
-from langchain_core.messages import AIMessage, AIMessageChunk
-from langchain_core.outputs import ChatGenerationChunk
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    BaseMessage,
+    ToolCallChunk,
+)
+from langchain_core.outputs import (
+    ChatGeneration,
+    ChatGenerationChunk,
+    ChatResult,
+)
 from openinference.instrumentation import OITracer, TraceConfig
 from openinference.instrumentation.langchain import LangChainInstrumentor
 from openinference.semconv.trace import SpanAttributes
@@ -42,7 +52,9 @@ from observatorio_maria.llm.registry import (
 )
 from observatorio_maria.models import CatalogDataSource, table_registry
 from observatorio_maria.observability.genai import (
+    AgentMetrics,
     GenAIMetricsHandler,
+    get_agent_metrics,
     get_llm_callbacks,
     get_tracer,
 )
@@ -82,6 +94,54 @@ class FailingChatModel(BaseChatModel):
         self, messages, stop=None, run_manager=None, **kwargs
     ):
         raise RuntimeError('provedor indisponível')
+
+
+class ScriptedToolChatModel(BaseChatModel):
+    """Fake que aceita bind_tools e devolve tool_calls roteirizados."""
+
+    responses: list[AIMessage]
+    bound_tools: list = []
+    recorded_calls: list[list[BaseMessage]] = []
+
+    @property
+    def _llm_type(self) -> str:
+        return 'scripted-fake'
+
+    def bind_tools(self, tools, **kwargs):
+        self.bound_tools = list(tools)
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.recorded_calls.append(list(messages))
+        msg = self.responses.pop(0) if self.responses else AIMessage('Fim')
+        return ChatResult(generations=[ChatGeneration(message=msg)])
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        self.recorded_calls.append(list(messages))
+        msg = self.responses.pop(0) if self.responses else AIMessage('Fim')
+        if msg.tool_calls:
+            tc_chunks = [
+                ToolCallChunk(
+                    name=tc['name'],
+                    args=(
+                        json.dumps(tc['args'])
+                        if isinstance(tc['args'], dict)
+                        else tc['args']
+                    ),
+                    id=tc.get('id', f'call_{i}'),
+                    index=i,
+                )
+                for i, tc in enumerate(msg.tool_calls)
+            ]
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content=msg.content or '',
+                    tool_call_chunks=tc_chunks,
+                )
+            )
+        else:
+            for char in msg.content:
+                yield ChatGenerationChunk(message=AIMessageChunk(content=char))
 
 
 def fake_model(tier: ModelTier, handler: RecordingHandler):
@@ -172,10 +232,11 @@ def spans(monkeypatch):
 def metric_reader(monkeypatch):
     monkeypatch.setenv('OTEL_SDK_DISABLED', 'false')
     reader = InMemoryMetricReader()
-    handler = GenAIMetricsHandler(
-        MeterProvider(metric_readers=[reader]).get_meter('test')
-    )
+    meter = MeterProvider(metric_readers=[reader]).get_meter('test')
+    handler = GenAIMetricsHandler(meter)
+    agent_metrics = AgentMetrics(meter)
     app.dependency_overrides[get_llm_callbacks] = lambda: [handler]
+    app.dependency_overrides[get_agent_metrics] = lambda: agent_metrics
     return reader
 
 

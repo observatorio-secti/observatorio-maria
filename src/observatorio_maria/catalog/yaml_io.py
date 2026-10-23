@@ -54,6 +54,7 @@ class ColumnDoc(BaseModel):
     values: list[ColumnValue] = []
     visible: bool = True
     access: ColumnAccess = ColumnAccess.FULL
+    searchable: bool = False
 
 
 class EntityDoc(BaseModel):
@@ -291,6 +292,7 @@ def _column_doc(column: CatalogColumn) -> dict[str, Any]:
         'values': column.values,
         'visible': column.visible,
         'access': column.access,
+        'searchable': column.searchable,
     }
 
 

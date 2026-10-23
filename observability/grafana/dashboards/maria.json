@@ -199,12 +199,89 @@
       ]
     },
     {
+      "id": 11,
+      "type": "row",
+      "title": "Consultas a dados e agente",
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Chamadas ao modelo por resposta",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(maria_agent_model_calls_bucket[$__rate_interval])))",
+          "legendFormat": "p95 chamadas/resposta"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Consultas a dados por desfecho",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (outcome, source) (rate(maria_query_count_total[$__rate_interval]))",
+          "legendFormat": "{{source}} · {{outcome}}"
+        }
+      ]
+    },
+    {
       "id": 8,
       "type": "row",
       "title": "Traces e logs",
       "gridPos": {
         "x": 0,
-        "y": 18,
+        "y": 27,
         "w": 24,
         "h": 1
       },
@@ -221,7 +298,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 19,
+        "y": 28,
         "w": 12,
         "h": 10
       },
@@ -249,7 +326,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 19,
+        "y": 28,
         "w": 12,
         "h": 10
       },

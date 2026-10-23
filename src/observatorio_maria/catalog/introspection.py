@@ -129,6 +129,13 @@ def create_readonly_engine(url: str) -> AsyncEngine:
             cursor = dbapi_connection.cursor()
             cursor.execute('PRAGMA query_only=ON')
             cursor.close()
+            dbapi_connection.create_function(
+                'translate',
+                3,
+                lambda s, f, t: s.translate(str.maketrans(f, t))
+                if s is not None
+                else None,
+            )
 
     return engine
 

@@ -140,12 +140,21 @@ class ChatExchange(BaseModel):
 # --- Streaming (Server-Sent Events) ------------------------------------------
 
 
+class ActivityPublic(BaseModel):
+    """Evento `activity`: ação em andamento (ex: consulta a dados)."""
+
+    kind: Literal['query'] = 'query'
+    source: str = Field(description='Nome da fonte de dados consultada.')
+    description: str = Field(description='Descrição curta da consulta.')
+
+
 class ContentDeltaPublic(BaseModel):
     """Evento `content.delta`: fragmento do bloco `index` da resposta."""
 
     index: int
-    type: Literal['text'] = 'text'
-    text: str
+    type: Literal['text', 'chart', 'table'] = 'text'
+    text: str | None = None
+    block: dict[str, Any] | None = None
 
 
 class StreamError(BaseModel):
@@ -274,6 +283,7 @@ class ColumnPublic(BaseModel):
     obsolete_values: list[str]
     visible: bool
     access: ColumnAccess
+    searchable: bool
     present: bool
 
 
@@ -286,6 +296,7 @@ class ColumnUpdate(BaseModel):
     values: list[ColumnValue] = None
     visible: bool = None
     access: ColumnAccess = None
+    searchable: bool = None
 
 
 class EntitySummary(BaseModel):

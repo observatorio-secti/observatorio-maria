@@ -101,6 +101,34 @@ def get_genai_metrics_handler() -> GenAIMetricsHandler:
     return GenAIMetricsHandler(metrics.get_meter(INSTRUMENTATION_NAME))
 
 
+class AgentMetrics:
+    """Métricas de execução do agente (chamadas ao modelo e consultas)."""
+
+    def __init__(self, meter: Meter):
+        self._model_calls = meter.create_histogram(
+            'maria.agent.model_calls',
+            unit='{call}',
+            description='Número de chamadas ao modelo por resposta.',
+            explicit_bucket_boundaries_advisory=[1, 2, 3, 4, 5],
+        )
+        self._query_count = meter.create_counter(
+            'maria.query.count',
+            unit='{query}',
+            description='Total de consultas a fontes do catálogo.',
+        )
+
+    def record_model_calls(self, count: int) -> None:
+        self._model_calls.record(count)
+
+    def record_query(self, outcome: str, source: str) -> None:
+        self._query_count.add(1, {'outcome': outcome, 'source': source})
+
+
+@lru_cache
+def get_agent_metrics() -> AgentMetrics:
+    return AgentMetrics(metrics.get_meter(INSTRUMENTATION_NAME))
+
+
 def get_llm_callbacks(
     metrics_handler: Annotated[
         GenAIMetricsHandler, Depends(get_genai_metrics_handler)

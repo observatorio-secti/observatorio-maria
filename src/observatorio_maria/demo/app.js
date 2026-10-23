@@ -290,6 +290,7 @@ async function sendMessage(event) {
   let userNode = optimistic;
   let partial = null; // balão com o texto em geração
   let text = '';
+  const receivedBlocks = [];
   try {
     // Sem conversa selecionada, a primeira mensagem cria uma nova.
     if (!state.current) {
@@ -303,13 +304,23 @@ async function sendMessage(event) {
         const node = renderMessage(data, { pending: true });
         userNode.replaceWith(node);
         userNode = node;
+      } else if (event === 'activity') {
+        typing.textContent = data.description || 'Maria está consultando os dados…';
+        container.scrollTop = container.scrollHeight;
       } else if (event === 'content.delta') {
         if (!partial) {
           partial = el('div', { class: 'message assistant' });
           typing.replaceWith(partial);
         }
-        text += data.text;
-        partial.replaceChildren(renderBlocks([{ type: 'text', text }]));
+        if (data.type === 'text' && data.text) {
+          text += data.text;
+        } else if (data.block) {
+          receivedBlocks.push(data.block);
+        }
+        const renderList = [];
+        if (text) renderList.push({ type: 'text', text });
+        renderList.push(...receivedBlocks);
+        partial.replaceChildren(renderBlocks(renderList));
         container.scrollTop = container.scrollHeight;
       } else if (event === 'message.assistant') {
         // Versão persistida substitui o texto parcial; a pergunta também foi gravada.

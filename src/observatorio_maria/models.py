@@ -219,6 +219,9 @@ class CatalogColumn:
     access: Mapped[ColumnAccess] = mapped_column(
         String(20), default=ColumnAccess.FULL
     )
+    searchable: Mapped[bool] = mapped_column(
+        default=False, server_default=false()
+    )
     present: Mapped[bool] = mapped_column(default=False)
 
     def _described(self) -> set[str]:

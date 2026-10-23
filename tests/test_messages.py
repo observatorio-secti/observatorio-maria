@@ -6,7 +6,9 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from sqlalchemy import select
 
 from observatorio_maria.app import app
-from observatorio_maria.llm.prompts import MARIA_SYSTEM_PROMPT
+from observatorio_maria.llm.prompts import (
+    build_system_prompt,
+)
 from observatorio_maria.llm.registry import (
     ModelRegistry,
     ModelTier,
@@ -94,7 +96,7 @@ async def test_model_receives_system_prompt_and_history(
     await client.post(url, json={'content': 'Segunda pergunta'})
 
     assert model_handler.calls[-1] == [
-        SystemMessage(MARIA_SYSTEM_PROMPT),
+        SystemMessage(build_system_prompt()),
         HumanMessage('Primeira pergunta'),
         AIMessage('Resposta do modelo medium'),
         HumanMessage('Segunda pergunta'),

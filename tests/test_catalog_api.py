@@ -273,6 +273,7 @@ async def test_update_column(client, synced):
         json={
             'visible': True,
             'access': 'aggregate',
+            'searchable': True,
             'description': 'Situação',
             'values': [{'value': 'REGULAR', 'description': 'válida'}],
         },
@@ -281,7 +282,18 @@ async def test_update_column(client, synced):
     assert response.status_code == HTTPStatus.OK
     data = response.json()
     assert data['access'] == 'aggregate'
+    assert data['searchable'] is True
     assert data['values'] == [{'value': 'REGULAR', 'description': 'válida'}]
+
+
+async def test_update_column_rejects_null_searchable(client, synced):
+    status = (await entity_detail(client, 'bolsas'))['columns'][1]
+
+    response = await client.patch(
+        f'/catalog/columns/{status["id"]}', json={'searchable': None}
+    )
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 async def test_update_column_invalid_access(client, synced):

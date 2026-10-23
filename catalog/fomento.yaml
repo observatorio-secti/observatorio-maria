@@ -18,10 +18,12 @@ datasource:
   schemas: [public]
   instructions: |
     - Banco PostgreSQL. Os identificadores (`id` e colunas `*_id`) são UUIDs internos: use-os só em junções e nunca os mostre ao usuário.
+    - O banco contém cerca de 40 mil registros de bolsas e aproximadamente 30 mil pesquisadores distintos. Para contagens e totais, prefira agregações (ex.: COUNT(DISTINCT ...), GROUP BY ou mv_bolsas_metricas).
     - Para contar bolsas, considere apenas status REGULAR, RESOLVIDA e PENDENTE_REVISAO; DESCARTADA nunca entra nas contagens. É o mesmo recorte do painel do módulo de fomento.
     - Para totais por ano, modalidade, instituição, cidade, território ou área, prefira `mv_bolsas_metricas` e some a coluna `quantidade` (não use COUNT(*) nela).
     - Uma bolsa está ativa numa data se começou até ela e `quando_terminou` é nula ou posterior.
     - Áreas do conhecimento formam uma árvore (grande área > área > subárea); um projeto pode apontar para qualquer nível.
+    - O identificador Lattes em `pesquisadores.lattes` indica se o pesquisador está identificado no Simcc. Quando `lattes` for nulo, o pesquisador não está presente no Simcc. Ao responder sobre presença no Simcc ou dados relacionados (como artigos), considere essa distinção.
 
 entities:
   - name: bolsas
@@ -110,8 +112,10 @@ entities:
         description: Identificador interno.
       - name: nome
         label: Título
+        searchable: true
       - name: resumo
         label: Resumo
+        searchable: true
       - name: area_conhecimento_id
         description: Área do conhecimento do projeto, em qualquer nível da árvore.
 
@@ -176,6 +180,7 @@ entities:
         description: Identificador interno.
       - name: termo
         label: Nome
+        searchable: true
       - name: termo_normalizado
         description: Nome sem acentos e em minúsculas, para buscas.
       - name: tipo
@@ -196,6 +201,7 @@ entities:
         description: Identificador interno.
       - name: termo
         label: Termo
+        searchable: true
       - name: termo_normalizado
         description: Termo sem acentos e em minúsculas, para buscas.
 

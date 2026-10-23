@@ -109,7 +109,10 @@ async def test_first_sync_adds_everything_hidden(session, datasource, url):
         assert entity.present
         assert not entity.visible
         assert not entity.queryable
-        assert all(c.present and not c.visible for c in entity.columns)
+        assert all(
+            c.present and not c.visible and not c.searchable
+            for c in entity.columns
+        )
 
     relationships = await load_relationships(session, datasource.id)
     assert all(
@@ -125,6 +128,7 @@ async def test_resync_preserves_editorial_config(session, datasource, url):
     bolsas.visible = bolsas.queryable = True
     bolsas.columns[1].description = 'Situação da bolsa'
     bolsas.columns[1].visible = True
+    bolsas.columns[1].searchable = True
     await session.commit()
 
     report = await sync(session, datasource, url)
@@ -137,6 +141,7 @@ async def test_resync_preserves_editorial_config(session, datasource, url):
     assert bolsas.queryable
     assert bolsas.columns[1].description == 'Situação da bolsa'
     assert bolsas.columns[1].visible
+    assert bolsas.columns[1].searchable
 
 
 async def test_removed_table_becomes_missing_and_returns(
