@@ -13,7 +13,7 @@ O sistema SHALL emitir traces OpenTelemetry via OTLP em que uma requisição HTT
 - **THEN** é emitido um trace com o span HTTP da rota, spans das consultas ao banco e o span do LLM como descendente
 
 ### Requirement: Caminho da IA por resposta
-Cada resposta da Maria SHALL gerar um span de cadeia `maria.chat` no padrão OpenInference, com entrada, saída e o identificador da conversa como sessão, contendo como filhos os spans das chamadas ao modelo, com mensagens, modelo e contagem de tokens.
+Cada resposta da Maria, completa ou em streaming, SHALL gerar um span de cadeia `maria.chat` no padrão OpenInference, com entrada, saída e o identificador da conversa como sessão, contendo como filhos os spans das chamadas ao modelo, com mensagens, modelo e contagem de tokens.
 
 #### Scenario: Inspeção de uma resposta
 - **WHEN** a Maria responde a uma mensagem
@@ -22,6 +22,10 @@ Cada resposta da Maria SHALL gerar um span de cadeia `maria.chat` no padrão Ope
 #### Scenario: Falha do modelo rastreada
 - **WHEN** o modelo falha durante a geração
 - **THEN** o span `maria.chat` termina com status de erro e a exceção registrada
+
+#### Scenario: Resposta em streaming rastreada
+- **WHEN** a Maria responde pelo endpoint de streaming
+- **THEN** o span `maria.chat` tem como saída o texto completo, e as métricas de tokens e duração são registradas como numa resposta completa
 
 ### Requirement: Métricas de uso do LLM
 O sistema SHALL registrar as métricas `gen_ai.client.token.usage` (por tipo de token: entrada e saída) e `gen_ai.client.operation.duration`, com o modelo como atributo, seguindo as convenções semânticas GenAI do OpenTelemetry.

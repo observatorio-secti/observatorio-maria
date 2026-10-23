@@ -24,11 +24,15 @@ A página SHALL permitir digitar e enviar uma mensagem assim que é aberta. Sem 
 - **THEN** uma conversa é criada, aparece na lista com o título da pergunta e exibe a resposta da Maria
 
 ### Requirement: Feedback durante a geração
-Enquanto aguarda a resposta, a página SHALL indicar que a Maria está respondendo e MUST impedir envios duplicados.
+Enquanto aguarda a resposta, a página SHALL indicar que a Maria está respondendo até o primeiro fragmento chegar e, a partir daí, SHALL exibir o texto progressivamente, renderizado em Markdown. A página MUST impedir envios duplicados até o fim da resposta.
 
 #### Scenario: Aguardando resposta
 - **WHEN** o usuário envia uma mensagem
-- **THEN** a página mostra um indicador de resposta em andamento até a resposta chegar ou um erro ser exibido
+- **THEN** a página mostra um indicador de resposta em andamento até o primeiro fragmento chegar ou um erro ser exibido
+
+#### Scenario: Texto aparecendo
+- **WHEN** a Maria gera a resposta
+- **THEN** o texto aparece na mensagem do assistente à medida que é gerado e, ao final, a mensagem exibe o horário da versão persistida
 
 ### Requirement: Gestão de conversas na página
 A página SHALL listar as conversas e permitir criar, abrir, renomear e excluir conversas.
