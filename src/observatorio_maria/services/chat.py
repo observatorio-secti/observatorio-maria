@@ -261,9 +261,10 @@ class ChatService:
         registros parciais.
         """
         registered = self.registry.get(CHAT_MODEL_TIER)
-        consultable_sources, contexts = (
-            await get_consultable_sources_and_contexts(self.session)
-        )
+        (
+            consultable_sources,
+            contexts,
+        ) = await get_consultable_sources_and_contexts(self.session)
         has_sources = len(consultable_sources) > 0
         max_calls = (
             self.settings.MARIA_AGENT_MAX_MODEL_CALLS if has_sources else 1
@@ -407,7 +408,9 @@ class ChatService:
 
         content_blocks: list[dict[str, Any]] = []
         if accumulated_text:
-            content_blocks.append(TextBlock(text=accumulated_text).model_dump())
+            content_blocks.append(
+                TextBlock(text=accumulated_text).model_dump()
+            )
         content_blocks.extend(query_runner.pending_blocks)
         if not content_blocks:
             content_blocks = [TextBlock(text='').model_dump()]

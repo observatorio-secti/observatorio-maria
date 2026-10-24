@@ -289,19 +289,29 @@ async def test_budget_exhausted_strips_query_tools_on_last_call(
     # 3 chamadas: chamada 1 query, chamada 2 query, chamada 3 última
     turn1 = AIMessage(
         content='',
-        tool_calls=[{
-            'name': 'query_data',
-            'args': {'source': 'fomento', 'sql': 'SELECT id FROM projetos'},
-            'id': 'c1',
-        }],
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'SELECT id FROM projetos',
+                },
+                'id': 'c1',
+            }
+        ],
     )
     turn2 = AIMessage(
         content='',
-        tool_calls=[{
-            'name': 'query_data',
-            'args': {'source': 'fomento', 'sql': 'SELECT id FROM projetos'},
-            'id': 'c2',
-        }],
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'SELECT id FROM projetos',
+                },
+                'id': 'c2',
+            }
+        ],
     )
     turn3 = AIMessage(content='Concluo com as informações que obtive.')
 
@@ -333,16 +343,19 @@ async def test_server_populates_chart_and_table_blocks(
 
     turn1 = AIMessage(
         content='',
-        tool_calls=[{
-            'name': 'query_data',
-            'args': {
-                'source': 'fomento',
-                'sql': (
-                    'SELECT ano, orcamento, nome FROM projetos ORDER BY ano'
-                ),
-            },
-            'id': 'c1',
-        }],
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': (
+                        'SELECT ano, orcamento, nome FROM projetos '
+                        'ORDER BY ano'
+                    ),
+                },
+                'id': 'c1',
+            }
+        ],
     )
     turn2 = AIMessage(
         content='Veja o resumo a seguir:',
@@ -405,27 +418,31 @@ async def test_streaming_emits_activity_and_block_deltas(
 
     turn1 = AIMessage(
         content='',
-        tool_calls=[{
-            'name': 'query_data',
-            'args': {
-                'source': 'fomento',
-                'sql': 'SELECT id, nome FROM projetos',
-                'purpose': 'Consultando projetos para listar',
-            },
-            'id': 'c1',
-        }],
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'SELECT id, nome FROM projetos',
+                    'purpose': 'Consultando projetos para listar',
+                },
+                'id': 'c1',
+            }
+        ],
     )
     turn2 = AIMessage(
         content='Aqui está a tabela:',
-        tool_calls=[{
-            'name': 'show_table',
-            'args': {
-                'result_id': 'r1',
-                'columns': ['nome'],
-                'title': 'Tabela de Projetos',
-            },
-            'id': 'c2',
-        }],
+        tool_calls=[
+            {
+                'name': 'show_table',
+                'args': {
+                    'result_id': 'r1',
+                    'columns': ['nome'],
+                    'title': 'Tabela de Projetos',
+                },
+                'id': 'c2',
+            }
+        ],
     )
 
     model = ScriptedToolChatModel(responses=[turn1, turn2])
@@ -472,18 +489,20 @@ async def test_partial_response_scenario_dengue_and_articles(
     # O fomento existe, mas artigos não existem em nenhuma fonte do catálogo.
     turn1 = AIMessage(
         content='',
-        tool_calls=[{
-            'name': 'query_data',
-            'args': {
-                'source': 'fomento',
-                'sql': (
-                    'SELECT nome, orcamento FROM projetos '
-                    "WHERE MATCH_TEXT(resumo, 'dengue')"
-                ),
-                'purpose': 'Consultando projetos de dengue',
-            },
-            'id': 'c1',
-        }],
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': (
+                        'SELECT nome, orcamento FROM projetos '
+                        "WHERE MATCH_TEXT(resumo, 'dengue')"
+                    ),
+                    'purpose': 'Consultando projetos de dengue',
+                },
+                'id': 'c1',
+            }
+        ],
     )
     turn2 = AIMessage(
         content=(

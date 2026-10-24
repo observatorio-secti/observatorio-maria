@@ -245,18 +245,20 @@ async def test_query_tool_span_generated_under_chat(
     await _setup_fomento(session, tmp_path, monkeypatch)
     turn1 = AIMessage(
         content='',
-        tool_calls=[{
-            'name': 'query_data',
-            'args': {
-                'source': 'fomento',
-                'sql': (
-                    'SELECT id, nome FROM projetos '
-                    "WHERE MATCH_TEXT(resumo, 'dengue')"
-                ),
-                'purpose': 'Consultando dengue',
-            },
-            'id': 'c1',
-        }],
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': (
+                        'SELECT id, nome FROM projetos '
+                        "WHERE MATCH_TEXT(resumo, 'dengue')"
+                    ),
+                    'purpose': 'Consultando dengue',
+                },
+                'id': 'c1',
+            }
+        ],
     )
     turn2 = AIMessage(content='Encontrado 1 projeto.')
     app.dependency_overrides[get_model_registry] = lambda: registry_with(
@@ -286,18 +288,20 @@ async def test_query_tool_span_respects_hidden_content(
     await _setup_fomento(session, tmp_path, monkeypatch)
     turn1 = AIMessage(
         content='',
-        tool_calls=[{
-            'name': 'query_data',
-            'args': {
-                'source': 'fomento',
-                'sql': (
-                    'SELECT id, nome FROM projetos '
-                    "WHERE MATCH_TEXT(resumo, 'dengue')"
-                ),
-                'purpose': 'Consultando dengue',
-            },
-            'id': 'c1',
-        }],
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': (
+                        'SELECT id, nome FROM projetos '
+                        "WHERE MATCH_TEXT(resumo, 'dengue')"
+                    ),
+                    'purpose': 'Consultando dengue',
+                },
+                'id': 'c1',
+            }
+        ],
     )
     turn2 = AIMessage(content='Encontrado 1 projeto.')
     app.dependency_overrides[get_model_registry] = lambda: registry_with(
@@ -319,15 +323,17 @@ async def test_rejected_query_tool_span_records_error_and_status(
     await _setup_fomento(session, tmp_path, monkeypatch)
     turn1 = AIMessage(
         content='',
-        tool_calls=[{
-            'name': 'query_data',
-            'args': {
-                'source': 'fomento',
-                'sql': 'SELECT * FROM projetos',
-                'purpose': 'Consulta proibida com asterisco',
-            },
-            'id': 'c1',
-        }],
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'SELECT * FROM projetos',
+                    'purpose': 'Consulta proibida com asterisco',
+                },
+                'id': 'c1',
+            }
+        ],
     )
     turn2 = AIMessage(content='Consulta recusada.')
     app.dependency_overrides[get_model_registry] = lambda: registry_with(
@@ -347,25 +353,29 @@ async def test_agent_metrics_model_calls_and_query_count(
     await _setup_fomento(session, tmp_path, monkeypatch)
     turn1 = AIMessage(
         content='',
-        tool_calls=[{
-            'name': 'query_data',
-            'args': {
-                'source': 'fomento',
-                'sql': 'SELECT * FROM projetos',
-            },
-            'id': 'c1',
-        }],
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'SELECT * FROM projetos',
+                },
+                'id': 'c1',
+            }
+        ],
     )
     turn2 = AIMessage(
         content='',
-        tool_calls=[{
-            'name': 'query_data',
-            'args': {
-                'source': 'fomento',
-                'sql': 'SELECT id, nome FROM projetos',
-            },
-            'id': 'c2',
-        }],
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'SELECT id, nome FROM projetos',
+                },
+                'id': 'c2',
+            }
+        ],
     )
     turn3 = AIMessage(content='Terminei.')
 

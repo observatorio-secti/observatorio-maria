@@ -191,7 +191,15 @@ def test_build_query_schema_from_fomento_seed(fomento_schema):
     assert ('projetos', 'nome') in fomento_schema.searchable_columns
     assert ('projetos', 'resumo') in fomento_schema.searchable_columns
     assert ('palavras_chave', 'termo') in fomento_schema.searchable_columns
+    assert (
+        'palavras_chave',
+        'termo_normalizado',
+    ) in fomento_schema.searchable_columns
     assert ('areas_conhecimento', 'termo') in fomento_schema.searchable_columns
+    assert (
+        'areas_conhecimento',
+        'termo_normalizado',
+    ) in fomento_schema.searchable_columns
     assert ('projetos', 'id') not in fomento_schema.searchable_columns
 
 
@@ -374,3 +382,63 @@ def test_normalize_term_escaping():
     assert normalize_term('Saúde & Inovação') == 'saude & inovacao'
     assert normalize_term('100%_concluído') == '100\\%\\_concluido'
     assert normalize_term("d'água") == "d''agua"
+
+
+def test_logical_connectors_allowed(sample_schema):
+    # Consulta com múltiplos AND, OR e parênteses
+    sql = validate_query(
+        'SELECT status, count(id) FROM bolsas '
+        "WHERE (status = 'REGULAR' OR status = 'RESOLVIDA') "
+        "AND cep_referencia LIKE '40%' "
+        'GROUP BY status',
+        sample_schema,
+    )
+    assert 'WHERE' in sql
+    assert 'OR' in sql or 'or' in sql
+    assert 'AND' in sql or 'and' in sql
+
+    # Rejeição de função inválida mesmo quando combinada com AND/OR
+    with pytest.raises(
+        QueryValidationError, match="Função 'pg_sleep' não permitida"
+    ):
+        validate_query(
+            "SELECT status FROM bolsas WHERE status = 'REGULAR' "
+            'AND pg_sleep(5) = 1',
+            sample_schema,
+        )
+
+
+def test_exists_subqueries_allowed(fomento_schema):
+    # EXISTS com SELECT 1 e MATCH_TEXT em tabela relacionada
+    sql = validate_query(
+        'SELECT b.id FROM bolsas b '
+        'WHERE EXISTS ('
+        '  SELECT 1 FROM projetos_palavras_chave ppc '
+        '  JOIN palavras_chave pc ON pc.id = ppc.palavra_chave_id '
+        '  WHERE ppc.projeto_id = b.projeto_id '
+        "  AND MATCH_TEXT(pc.termo, 'dengue')"
+        ')',
+        fomento_schema,
+    )
+    assert 'EXISTS' in sql
+    assert 'dengue' in sql
+
+    # EXISTS com SELECT * permitido sem violar regra de estrelas
+    sql2 = validate_query(
+        'SELECT b.id FROM bolsas b '
+        'WHERE EXISTS ('
+        '  SELECT * FROM projetos p WHERE p.id = b.projeto_id'
+        ')',
+        fomento_schema,
+    )
+    assert 'EXISTS' in sql2
+
+    # Rejeição de função proibida dentro de subconsulta EXISTS
+    with pytest.raises(
+        QueryValidationError, match="Função 'pg_sleep' não permitida"
+    ):
+        validate_query(
+            'SELECT b.id FROM bolsas b '
+            'WHERE EXISTS (SELECT pg_sleep(1) FROM projetos p)',
+            fomento_schema,
+        )

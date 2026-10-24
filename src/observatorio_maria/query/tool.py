@@ -231,15 +231,11 @@ class QueryRunner:
 
         cols_set = set(result.columns)
         if x not in cols_set:
-            return {
-                'error': f"Coluna '{x}' não encontrada no resultado."
-            }
+            return {'error': f"Coluna '{x}' não encontrada no resultado."}
 
         for s in series:
             if s not in cols_set:
-                return {
-                    'error': f"Coluna '{s}' não encontrada no resultado."
-                }
+                return {'error': f"Coluna '{s}' não encontrada no resultado."}
 
         chart_block = {
             'type': 'chart',
@@ -277,9 +273,7 @@ class QueryRunner:
         cols_set = set(result.columns)
         for c in columns:
             if c not in cols_set:
-                return {
-                    'error': f"Coluna '{c}' não encontrada no resultado."
-                }
+                return {'error': f"Coluna '{c}' não encontrada no resultado."}
 
         table_block = {
             'type': 'table',

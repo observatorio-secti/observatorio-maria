@@ -183,6 +183,7 @@ entities:
         searchable: true
       - name: termo_normalizado
         description: Nome sem acentos e em minúsculas, para buscas.
+        searchable: true
       - name: tipo
         label: Nível
         values:
@@ -204,6 +205,7 @@ entities:
         searchable: true
       - name: termo_normalizado
         description: Termo sem acentos e em minúsculas, para buscas.
+        searchable: true
 
   - name: projetos_palavras_chave
     description: Associação N:N entre projetos e palavras-chave.

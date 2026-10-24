@@ -2,11 +2,12 @@
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 import sqlglot
 from sqlglot import exp
 from sqlglot.optimizer.qualify import qualify
-from sqlglot.optimizer.scope import build_scope
+from sqlglot.optimizer.scope import traverse_scope
 from sqlglot.schema import MappingSchema
 
 from observatorio_maria.models import (
@@ -38,6 +39,8 @@ ALLOWED_FUNC_CLASSES = (
     exp.Abs,
     exp.GroupConcat,
     exp.Case,
+    exp.Connector,
+    exp.Exists,
 )
 
 ALLOWED_ANONYMOUS_FUNCS = {
@@ -173,10 +176,13 @@ def _check_tables(stmt: exp.Expression, schema: QuerySchema) -> None:
 
 def _check_stars(stmt: exp.Expression) -> None:
     for star in stmt.find_all(exp.Star):
-        if not isinstance(star.parent, exp.Count):
-            raise QueryValidationError(
-                "Selecione as colunas explicitamente em vez de usar '*'"
-            )
+        if isinstance(star.parent, exp.Count) or star.find_ancestor(
+            exp.Exists
+        ):
+            continue
+        raise QueryValidationError(
+            "Selecione as colunas explicitamente em vez de usar '*'"
+        )
 
 
 def _check_functions(stmt: exp.Expression) -> None:
@@ -229,7 +235,9 @@ def _is_inside_aggregate(col: exp.Column, top_expr: exp.Expression) -> bool:
 
 
 def _check_aggregate_columns(
-    qualified: exp.Expression, schema: QuerySchema, scope
+    qualified: exp.Expression,
+    schema: QuerySchema,
+    sources: dict[str, Any],
 ) -> None:
     for select in qualified.find_all(exp.Select):
         for expr in select.expressions:
@@ -239,7 +247,7 @@ def _check_aggregate_columns(
 
                 table_name = None
                 if col.table:
-                    src = scope.sources.get(col.table)
+                    src = sources.get(col.table)
                     if isinstance(src, exp.Table):
                         table_name = src.name.lower()
                     elif col.table.lower() in schema.queryable_tables:
@@ -276,11 +284,14 @@ def validate_query(sql: str, schema: QuerySchema) -> str:
     _check_functions(stmt)
 
     qualified = _qualify_query(stmt, schema)
-    scope = build_scope(qualified)
-    _check_aggregate_columns(qualified, schema, scope)
+    all_sources: dict[str, Any] = {}
+    for sc in traverse_scope(qualified):
+        all_sources.update(sc.sources)
+
+    _check_aggregate_columns(qualified, schema, all_sources)
 
     def table_resolver(alias: str) -> str | None:
-        src = scope.sources.get(alias)
+        src = all_sources.get(alias)
         if isinstance(src, exp.Table):
             return src.name.lower()
         return alias.lower()
