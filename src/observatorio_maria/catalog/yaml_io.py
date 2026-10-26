@@ -90,6 +90,13 @@ class RelationshipDoc(BaseModel):
     enabled: bool = True
 
 
+class QueryExampleDoc(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    question: str = Field(min_length=1, max_length=500)
+    sql: str = Field(min_length=1)
+
+
 class DataSourceDoc(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -98,6 +105,7 @@ class DataSourceDoc(BaseModel):
     connection_env: EnvName
     description: str | None = None
     instructions: str | None = None
+    examples: list[QueryExampleDoc] = []
     schemas: list[str] = Field(['public'], min_length=1)
     enabled: bool = True
     auto_sync: bool = False
@@ -317,6 +325,10 @@ async def export_catalog(
             connection_env=datasource.connection_env,
             description=datasource.description,
             instructions=datasource.instructions,
+            examples=[
+                QueryExampleDoc.model_validate(eg)
+                for eg in (datasource.examples or [])
+            ],
             schemas=datasource.schemas,
             enabled=datasource.enabled,
             auto_sync=datasource.auto_sync,

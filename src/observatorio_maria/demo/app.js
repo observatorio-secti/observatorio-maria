@@ -342,11 +342,13 @@ async function sendMessage(event) {
     userNode.remove();
     partial?.remove();
     const hint =
-      error.status === 503
-        ? ' Configure OPENAI_API_KEY no .env e reinicie a API.'
-        : error.status === 'stream'
-          ? ' Nada foi gravado na conversa; tente novamente.'
-          : '';
+      error.status === 429
+        ? ' Crie uma nova conversa pelo botão "+ Nova conversa" para continuar.'
+        : error.status === 503
+          ? ' Configure OPENAI_API_KEY no .env e reinicie a API.'
+          : error.status === 'stream'
+            ? ' Nada foi gravado na conversa; tente novamente.'
+            : '';
     const status = typeof error.status === 'number' ? ` ${error.status}` : '';
     showBanner(`Erro${status}: ${error.message}.${hint}`);
   } finally {

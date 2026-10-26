@@ -41,6 +41,7 @@ class ConversationPublic(BaseModel):
 
     id: UUID
     title: str | None
+    total_tokens: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -171,6 +172,13 @@ Label = Annotated[str, Field(min_length=1, max_length=200)]
 Synonyms = list[Annotated[str, Field(min_length=1, max_length=100)]]
 
 
+class QueryExample(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    question: Annotated[str, Field(min_length=1, max_length=500)]
+    sql: Annotated[str, Field(min_length=1)]
+
+
 class DataSourceCreate(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
@@ -179,6 +187,7 @@ class DataSourceCreate(BaseModel):
     connection_env: EnvName
     description: str | None = None
     instructions: str | None = None
+    examples: list[QueryExample] = Field(default_factory=list)
     schemas: list[str] = Field(['public'], min_length=1)
     enabled: bool = True
     auto_sync: bool = False
@@ -191,6 +200,7 @@ class DataSourceUpdate(BaseModel):
     connection_env: EnvName = None
     description: str | None = None
     instructions: str | None = None
+    examples: list[QueryExample] | None = None
     schemas: list[str] = Field(None, min_length=1)
     enabled: bool = None
     auto_sync: bool = None
@@ -218,6 +228,7 @@ class DataSourcePublic(BaseModel):
     connection_env: str
     description: str | None
     instructions: str | None
+    examples: list[QueryExample] = Field(default_factory=list)
     schemas: list[str]
     enabled: bool
     auto_sync: bool

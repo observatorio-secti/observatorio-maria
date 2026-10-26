@@ -442,3 +442,60 @@ def test_exists_subqueries_allowed(fomento_schema):
             'WHERE EXISTS (SELECT pg_sleep(1) FROM projetos p)',
             fomento_schema,
         )
+
+
+def test_limit_validation(fomento_schema):
+    # LIMIT válido
+    sql1 = validate_query(
+        'SELECT id FROM bolsas LIMIT 10', fomento_schema, max_rows=100
+    )
+    assert 'LIMIT 10' in sql1
+
+    # LIMIT no teto máximo exato
+    sql2 = validate_query(
+        'SELECT id FROM bolsas LIMIT 100', fomento_schema, max_rows=100
+    )
+    assert 'LIMIT 100' in sql2
+
+    # Sem LIMIT: aceito
+    sql3 = validate_query(
+        'SELECT id FROM bolsas', fomento_schema, max_rows=100
+    )
+    assert 'LIMIT' not in sql3
+
+    # LIMIT acima do máximo configurado
+    msg_excesso = (
+        r'O limite solicitado na consulta \(101\) excede o '
+        r'máximo permitido \(100\)'
+    )
+    with pytest.raises(QueryValidationError, match=msg_excesso):
+        validate_query(
+            'SELECT id FROM bolsas LIMIT 101', fomento_schema, max_rows=100
+        )
+
+    # LIMIT acima de max_rows customizado
+    msg_custom = (
+        r'O limite solicitado na consulta \(50\) excede o '
+        r'máximo permitido \(20\)'
+    )
+    with pytest.raises(QueryValidationError, match=msg_custom):
+        validate_query(
+            'SELECT id FROM bolsas LIMIT 50', fomento_schema, max_rows=20
+        )
+
+    # LIMIT zero ou negativo
+    with pytest.raises(
+        QueryValidationError,
+        match=r'O limite da consulta \(0\) deve ser um inteiro positivo',
+    ):
+        validate_query(
+            'SELECT id FROM bolsas LIMIT 0', fomento_schema, max_rows=100
+        )
+
+    with pytest.raises(
+        QueryValidationError,
+        match='O limite da consulta deve ser um inteiro positivo',
+    ):
+        validate_query(
+            'SELECT id FROM bolsas LIMIT -5', fomento_schema, max_rows=100
+        )

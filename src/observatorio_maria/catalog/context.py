@@ -82,6 +82,22 @@ def _entity_section(entity: CatalogEntity) -> list[str]:
     return lines
 
 
+def _examples_section(examples: list[dict] | None) -> list[str]:
+    if not examples:
+        return []
+    lines = ['', '## Exemplos de consultas (few-shot)']
+    for eg in examples:
+        q = eg.get('question', '').strip()
+        sql = eg.get('sql', '').strip()
+        if q and sql:
+            lines.append(f'- Pergunta: "{q}"')
+            lines.append('  ```sql')
+            for sql_line in sql.splitlines():
+                lines.append(f'  {sql_line}')
+            lines.append('  ```')
+    return lines
+
+
 def render_context(
     datasource: CatalogDataSource,
     entities: list[CatalogEntity],
@@ -122,5 +138,7 @@ def render_context(
         links.append(line)
     if links:
         lines += ['', '## Relacionamentos', *sorted(links)]
+
+    lines.extend(_examples_section(datasource.examples))
 
     return '\n'.join(lines) + '\n'

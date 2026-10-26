@@ -29,6 +29,9 @@ datasource:
   connection_env: SOURCE_DATABASE_URL
   schemas: [main]
   instructions: Contagens incluem bolsas pendentes.
+  examples:
+    - question: Quantas bolsas ativas?
+      sql: SELECT count(*) FROM bolsas;
 entities:
   - name: bolsas
     label: Bolsas
@@ -79,6 +82,12 @@ async def test_seed_creates_datasource_entities_columns(session, document):
     assert (report.entities, report.columns, report.relationships) == (3, 3, 2)
     datasource = await session.get(CatalogDataSource, 'origem')
     assert datasource.instructions == 'Contagens incluem bolsas pendentes.'
+    assert datasource.examples == [
+        {
+            'question': 'Quantas bolsas ativas?',
+            'sql': 'SELECT count(*) FROM bolsas;',
+        }
+    ]
 
     entities = by_name(await load_entities(session, 'origem'))
     bolsas = entities['bolsas']
@@ -156,6 +165,12 @@ async def test_seed_reset_recreates_from_file(session, document):
             ),
             'consultável precisa ser visível',
         ),
+        (
+            CATALOG_YAML.replace(
+                'question: Quantas bolsas ativas?', 'question: ""'
+            ),
+            'question',
+        ),
         (CATALOG_YAML.replace('id: origem', 'id: Origem!'), 'id'),
     ],
 )
@@ -204,6 +219,7 @@ async def test_export_round_trip(session, document, source_db):
     assert 'Pesquisador bolsista' in text
     assert 'bolsas_por_status.status' in text
     assert 'searchable: true' in text
+    assert 'Quantas bolsas ativas?' in text
 
 
 def test_seed_cli_reports_invalid_file(tmp_path, capsys):

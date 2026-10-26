@@ -24,7 +24,11 @@ class Settings(BaseSettings):
     QUERY_MAX_ROWS: int = Field(100, ge=1)
     QUERY_TIMEOUT_SECONDS: float = Field(15.0, gt=0)
     QUERY_MAX_PER_CALL: int = Field(4, ge=1)
+    QUERY_MAX_ESTIMATED_COST: float = Field(50_000.0, ge=0.0)
     MARIA_AGENT_MAX_MODEL_CALLS: int = Field(3, ge=1)
+
+    # Teto de tokens por conversa; 0 desliga a restrição.
+    CONVERSATION_TOKEN_CEILING: int = Field(100_000, ge=0)
 
     # Modelos por nível no formato "provedor:modelo" (init_chat_model).
     # Os *_KWARGS são repassados ao construtor do modelo (JSON no .env).

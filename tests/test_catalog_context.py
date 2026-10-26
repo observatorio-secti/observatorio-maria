@@ -143,3 +143,34 @@ async def test_searchable_column_rendered_in_context(
 
     assert '- `status` (VARCHAR(20)). aceita busca textual' in text
     assert 'lattes' not in text
+
+
+async def test_few_shot_examples_rendered_in_context(
+    session, datasource, synced
+):
+    datasource.examples = [
+        {
+            'question': 'Quantas bolsas ativas?',
+            'sql': "SELECT COUNT(*) FROM bolsas\nWHERE status = 'REGULAR';",
+        }
+    ]
+    await session.commit()
+
+    text = await context(session, datasource)
+
+    assert '## Exemplos de consultas (few-shot)' in text
+    assert '- Pergunta: "Quantas bolsas ativas?"' in text
+    assert (
+        '  ```sql\n  SELECT COUNT(*) FROM bolsas\n'
+        "  WHERE status = 'REGULAR';\n  ```"
+    ) in text
+
+
+async def test_datasource_without_examples_omits_section(
+    session, datasource, synced
+):
+    datasource.examples = []
+    await session.commit()
+
+    text = await context(session, datasource)
+    assert '## Exemplos de consultas (few-shot)' not in text

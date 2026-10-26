@@ -1,6 +1,7 @@
 """Execução somente leitura com limites de tempo e linhas."""
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
@@ -12,7 +13,10 @@ from sqlalchemy.exc import DBAPIError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from observatorio_maria.catalog.introspection import SourceUnavailableError
-from observatorio_maria.query.errors import QueryValidationError
+from observatorio_maria.query.errors import (
+    QueryCostExceededError,
+    QueryValidationError,
+)
 
 MAX_PURPOSE_LENGTH = 120
 
@@ -144,12 +148,67 @@ def _clean_error(exc: Exception) -> str:
     return msg.strip()
 
 
+async def check_query_cost(
+    conn: Any,
+    backend: str,
+    wrapped_sql: str,
+    max_cost: float,
+) -> float:
+    """Executa EXPLAIN no banco para validar se o custo está dentro do teto."""
+    if max_cost <= 0:
+        return 0.0
+
+    if backend == 'postgresql':
+        explain_res = await conn.execute(
+            text(f'EXPLAIN (FORMAT JSON) {wrapped_sql}')
+        )
+        raw_plan = explain_res.scalar()
+        plan_data = (
+            json.loads(raw_plan) if isinstance(raw_plan, str) else raw_plan
+        )
+        if plan_data and isinstance(plan_data, list):
+            plan_root = plan_data[0].get('Plan', {})
+            total_cost = float(plan_root.get('Total Cost', 0.0))
+            if total_cost > max_cost:
+                raise QueryCostExceededError(
+                    total_cost=total_cost, max_cost=max_cost
+                )
+            return total_cost
+    elif backend == 'sqlite':
+        await conn.execute(text(f'EXPLAIN QUERY PLAN {wrapped_sql}'))
+    return 0.0
+
+
+async def _run_query_on_connection(  # noqa: PLR0913
+    conn: Any,
+    backend: str,
+    timeout_seconds: float,
+    wrapped_sql: str,
+    max_cost: float = 0.0,
+) -> tuple[list[str], list[Any]]:
+    if backend == 'postgresql':
+        timeout_ms = int(timeout_seconds * 1000)
+        async with conn.begin():
+            await conn.execute(
+                text(f'SET LOCAL statement_timeout = {timeout_ms}')
+            )
+            await conn.execute(text('SET TRANSACTION READ ONLY'))
+            await check_query_cost(conn, backend, wrapped_sql, max_cost)
+            cursor = await conn.execute(text(wrapped_sql))
+            return list(cursor.keys()), cursor.fetchall()
+
+    await check_query_cost(conn, backend, wrapped_sql, max_cost)
+    cursor = await conn.execute(text(wrapped_sql))
+    return list(cursor.keys()), cursor.fetchall()
+
+
 async def execute_readonly_query(
     engine: AsyncEngine,
     sql: str,
     *,
     max_rows: int = 100,
     timeout_seconds: float = 15.0,
+    max_cost: float = 0.0,
 ) -> tuple[list[str], list[list[Any]], bool, dict[str, str]]:
     """Executa a consulta na origem somente leitura com limite e timeout."""
     wrapped_sql = f'SELECT * FROM ({sql}) AS q LIMIT {max_rows + 1}'
@@ -159,16 +218,14 @@ async def execute_readonly_query(
         async with asyncio.timeout(timeout_seconds):
             try:
                 async with engine.connect() as conn:
-                    if backend == 'postgresql':
-                        timeout_ms = int(timeout_seconds * 1000)
-                        await conn.execute(
-                            text(f'SET LOCAL statement_timeout = {timeout_ms}')
-                        )
-                        await conn.execute(text('SET TRANSACTION READ ONLY'))
+                    columns, raw_rows = await _run_query_on_connection(
+                        conn,
+                        backend,
+                        timeout_seconds,
+                        wrapped_sql,
+                        max_cost=max_cost,
+                    )
 
-                    cursor = await conn.execute(text(wrapped_sql))
-                    columns = list(cursor.keys())
-                    raw_rows = cursor.fetchall()
                     truncated = len(raw_rows) > max_rows
                     if truncated:
                         raw_rows = raw_rows[:max_rows]
@@ -193,12 +250,23 @@ async def execute_readonly_query(
                 raise
     except TimeoutError as exc:
         raise QueryTimeoutError('Tempo limite de execução esgotado') from exc
-    except SourceUnavailableError:
+    except (SourceUnavailableError, QueryCostExceededError):
         raise
     except (DBAPIError, OperationalError, SQLAlchemyError) as exc:
         err_msg = _clean_error(exc)
         low = err_msg.lower()
-        if 'timeout' in low or 'canceling statement' in low:
+        orig = getattr(exc, 'orig', None)
+        sqlstate = str(
+            getattr(orig, 'sqlstate', None)
+            or getattr(orig, 'pgcode', None)
+            or ''
+        )
+        if (
+            '57014' in sqlstate
+            or 'timeout' in low
+            or 'canceling statement' in low
+            or 'statement_timeout' in low
+        ):
             raise QueryTimeoutError(
                 'Tempo limite de execução esgotado'
             ) from exc

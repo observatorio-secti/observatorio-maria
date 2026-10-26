@@ -30,6 +30,7 @@ from observatorio_maria.services.chat import (
     ChatEvent,
     ChatService,
     ContentDelta,
+    ConversationTokenLimitExceededError,
     ModelInvocationError,
     UserMessageCreated,
     get_chat_service,
@@ -53,6 +54,24 @@ async def get_conversation(conversation_id: UUID, session: Session):
 
 
 CurrentConversation = Annotated[Conversation, Depends(get_conversation)]
+
+
+def check_conversation_token_ceiling(
+    conversation: CurrentConversation, chat: Chat
+) -> Conversation:
+    try:
+        chat.check_token_ceiling(conversation)
+    except ConversationTokenLimitExceededError as exc:
+        raise HTTPException(
+            status_code=HTTPStatus.TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+    return conversation
+
+
+ActiveConversation = Annotated[
+    Conversation, Depends(check_conversation_token_ceiling)
+]
 
 
 @router.post(
@@ -115,7 +134,7 @@ async def list_messages(conversation: CurrentConversation, session: Session):
     response_model=ChatExchange,
 )
 async def send_message(
-    data: MessageCreate, conversation: CurrentConversation, chat: Chat
+    data: MessageCreate, conversation: ActiveConversation, chat: Chat
 ):
     try:
         user_message, assistant_message = await chat.send_message(
@@ -177,7 +196,7 @@ def to_server_sent_event(event: ChatEvent) -> ServerSentEvent:
     ),
 )
 async def stream_message(
-    data: MessageCreate, conversation: CurrentConversation, chat: Chat
+    data: MessageCreate, conversation: ActiveConversation, chat: Chat
 ) -> AsyncIterable[ServerSentEvent]:
     try:
         async for event in chat.stream_message(conversation, data.content):

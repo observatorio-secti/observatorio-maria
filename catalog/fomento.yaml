@@ -24,6 +24,20 @@ datasource:
     - Uma bolsa está ativa numa data se começou até ela e `quando_terminou` é nula ou posterior.
     - Áreas do conhecimento formam uma árvore (grande área > área > subárea); um projeto pode apontar para qualquer nível.
     - O identificador Lattes em `pesquisadores.lattes` indica se o pesquisador está identificado no Simcc. Quando `lattes` for nulo, o pesquisador não está presente no Simcc. Ao responder sobre presença no Simcc ou dados relacionados (como artigos), considere essa distinção.
+  examples:
+    - question: "Quantas bolsas ativas existem?"
+      sql: >-
+        SELECT COUNT(*) FROM public.bolsas WHERE status IN ('REGULAR', 'RESOLVIDA', 'PENDENTE_REVISAO') AND quando_terminou IS NULL
+    - question: "Total de bolsas por ano a partir de 2020"
+      sql: >-
+        SELECT ano, SUM(quantidade) AS total FROM public.mv_bolsas_metricas WHERE ano >= 2020 GROUP BY ano ORDER BY ano
+    - question: "Projetos de pesquisa sobre dengue"
+      sql: >-
+        SELECT id, nome FROM public.projetos WHERE MATCH_TEXT(resumo, 'dengue', 'arbovirose')
+    - question: "Quantos pesquisadores têm currículo Lattes identificado?"
+      sql: >-
+        SELECT COUNT(*) FROM public.pesquisadores WHERE lattes IS NOT NULL
+
 
 entities:
   - name: bolsas

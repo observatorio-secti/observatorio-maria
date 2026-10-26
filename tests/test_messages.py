@@ -1,5 +1,6 @@
 from http import HTTPStatus
-from uuid import uuid4
+from itertools import repeat
+from uuid import UUID, uuid4
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -15,9 +16,9 @@ from observatorio_maria.llm.registry import (
     RegisteredModel,
     get_model_registry,
 )
-from observatorio_maria.models import Message, MessageRole
+from observatorio_maria.models import Conversation, Message, MessageRole
 from observatorio_maria.services.chat import CHAT_MODEL_TIER
-from tests.conftest import FailingChatModel
+from tests.conftest import FailingChatModel, UsageReportingFakeChatModel
 
 
 def messages_url(conversation):
@@ -179,3 +180,39 @@ async def test_list_messages_does_not_require_models(client, conversation):
     response = await client.get(messages_url(conversation))
 
     assert response.status_code == HTTPStatus.OK
+
+
+async def test_send_message_accumulates_tokens(client, conversation):
+    usage = {'input_tokens': 20, 'output_tokens': 10, 'total_tokens': 30}
+    fake = UsageReportingFakeChatModel(
+        messages=repeat(AIMessage('Resposta com tokens')), usage=usage
+    )
+    registry = ModelRegistry([
+        RegisteredModel(tier, f'fake:{tier}', fake) for tier in ModelTier
+    ])
+    app.dependency_overrides[get_model_registry] = lambda: registry
+
+    response = await client.post(
+        messages_url(conversation), json={'content': 'Oi'}
+    )
+    assert response.status_code == HTTPStatus.CREATED
+
+    conv_res = await client.get(f'/conversations/{conversation["id"]}')
+    assert conv_res.json()['total_tokens'] == 30  # noqa: PLR2004
+
+
+async def test_send_message_rejects_when_token_ceiling_reached(
+    client, conversation, session
+):
+    db_conv = await session.get(Conversation, UUID(conversation['id']))
+    db_conv.total_tokens = 100_000
+    await session.commit()
+
+    response = await client.post(
+        messages_url(conversation), json={'content': 'Mais uma mensagem'}
+    )
+    assert response.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert 'Limite de tokens da conversa atingido' in response.json()['detail']
+
+    history = (await client.get(messages_url(conversation))).json()['messages']
+    assert len(history) == 0

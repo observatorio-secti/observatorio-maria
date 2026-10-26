@@ -15,6 +15,7 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
+from langchain_core.outputs import LLMResult
 from openinference.instrumentation import OITracer, using_session
 from openinference.semconv.trace import SpanAttributes
 from opentelemetry import trace
@@ -65,6 +66,32 @@ CHAT_MODEL_TIER = ModelTier.MEDIUM
 
 class ModelInvocationError(Exception):
     """O modelo de linguagem falhou ao gerar a resposta."""
+
+
+class ConversationTokenLimitExceededError(Exception):
+    """O teto de tokens da conversa foi atingido."""
+
+
+class _TokenUsageTracker(BaseCallbackHandler):
+    run_inline = True
+
+    def __init__(self):
+        self.total_tokens = 0
+
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        try:
+            for gens in response.generations:
+                for gen in gens:
+                    msg = getattr(gen, 'message', None)
+                    usage = getattr(msg, 'usage_metadata', None)
+                    if usage:
+                        tokens = usage.get('total_tokens') or (
+                            usage.get('input_tokens', 0)
+                            + usage.get('output_tokens', 0)
+                        )
+                        self.total_tokens += tokens
+        except Exception:
+            pass
 
 
 def summarize_chart(block: dict[str, Any]) -> str:
@@ -251,6 +278,18 @@ class ChatService:
         self.settings = settings or Settings()
         self.agent_metrics = agent_metrics or get_agent_metrics()
 
+    def check_token_ceiling(self, conversation: Conversation) -> None:
+        """Verifica se a conversa atingiu o teto de tokens permitido."""
+        if (
+            self.settings.CONVERSATION_TOKEN_CEILING > 0
+            and (conversation.total_tokens or 0)
+            >= self.settings.CONVERSATION_TOKEN_CEILING
+        ):
+            raise ConversationTokenLimitExceededError(
+                'Limite de tokens da conversa atingido. '
+                'Inicie uma nova conversa para continuar.'
+            )
+
     async def stream_message(  # noqa: C901, PLR0912, PLR0914, PLR0915, PLR1702
         self, conversation: Conversation, content: str
     ) -> AsyncIterator[ChatEvent]:
@@ -260,6 +299,7 @@ class ChatService:
         (ModelInvocationError) ou interrupção pelo consumidor não deixam
         registros parciais.
         """
+        self.check_token_ceiling(conversation)
         registered = self.registry.get(CHAT_MODEL_TIER)
         (
             consultable_sources,
@@ -288,6 +328,7 @@ class ChatService:
             result_store,
             max_rows=self.settings.QUERY_MAX_ROWS,
             timeout_seconds=self.settings.QUERY_TIMEOUT_SECONDS,
+            max_cost=self.settings.QUERY_MAX_ESTIMATED_COST,
             max_per_call=self.settings.QUERY_MAX_PER_CALL,
         )
         query_tools = query_runner.build_query_tools() if has_sources else []
@@ -310,6 +351,7 @@ class ChatService:
 
         accumulated_text = ''
         call_count = 0
+        token_tracker = _TokenUsageTracker()
 
         try:
             while call_count < max_calls:
@@ -348,7 +390,7 @@ class ChatService:
                     active_model.astream(
                         turn_messages,
                         config={
-                            'callbacks': self.callbacks,
+                            'callbacks': [*self.callbacks, token_tracker],
                             'metadata': {'model_tier': str(registered.tier)},
                         },
                     ),
@@ -435,11 +477,26 @@ class ChatService:
             model_tier=registered.tier,
             model_name=registered.name,
         )
+        tokens_used = token_tracker.total_tokens
+        if (
+            tokens_used == 0
+            and turn_chunk
+            and getattr(turn_chunk, 'usage_metadata', None)
+        ):
+            um = turn_chunk.usage_metadata
+            tokens_used = um.get('total_tokens') or (
+                um.get('input_tokens', 0) + um.get('output_tokens', 0)
+            )
+
+        conversation.total_tokens = (
+            conversation.total_tokens or 0
+        ) + tokens_used
+
         if conversation.title is None:
             conversation.title = auto_title(content)
         conversation.updated_at = assistant_message.created_at
 
-        self.session.add_all([user_message, assistant_message])
+        self.session.add_all([user_message, assistant_message, conversation])
         await self.session.commit()
         yield AssistantMessageCompleted(assistant_message)
 

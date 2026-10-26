@@ -10,7 +10,8 @@ async def test_create_conversation_with_title(client):
     assert response.status_code == HTTPStatus.CREATED
     data = response.json()
     assert data['title'] == 'Pesquisa em Salvador'
-    assert {'id', 'created_at', 'updated_at'} <= data.keys()
+    assert {'id', 'created_at', 'updated_at', 'total_tokens'} <= data.keys()
+    assert data['total_tokens'] == 0
 
 
 async def test_create_conversation_without_title(client):

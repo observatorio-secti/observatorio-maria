@@ -49,6 +49,55 @@ async def test_create_datasource(client):
     assert data['enabled'] is True
     assert data['entities_total'] == 0
     assert data['last_synced_at'] is None
+    assert data['examples'] == []
+
+
+async def test_create_datasource_with_examples(client):
+    payload = NEW_DATASOURCE | {
+        'examples': [
+            {
+                'question': 'Quantas bolsas ativas?',
+                'sql': 'SELECT count(*) FROM bolsas;',
+            }
+        ]
+    }
+    response = await client.post('/catalog/datasources', json=payload)
+
+    assert response.status_code == HTTPStatus.CREATED
+    data = response.json()
+    assert data['examples'] == [
+        {
+            'question': 'Quantas bolsas ativas?',
+            'sql': 'SELECT count(*) FROM bolsas;',
+        }
+    ]
+
+
+async def test_update_datasource_examples(client, datasource):
+    response = await client.patch(
+        '/catalog/datasources/origem',
+        json={
+            'examples': [
+                {
+                    'question': 'Nova pergunta?',
+                    'sql': 'SELECT 1;',
+                }
+            ]
+        },
+    )
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()['examples'] == [
+        {
+            'question': 'Nova pergunta?',
+            'sql': 'SELECT 1;',
+        }
+    ]
+
+    context_res = await client.get('/catalog/datasources/origem/context')
+    assert context_res.status_code == HTTPStatus.OK
+    assert (
+        '## Exemplos de consultas (few-shot)' in context_res.json()['content']
+    )
 
 
 async def test_datasource_never_exposes_connection_url(

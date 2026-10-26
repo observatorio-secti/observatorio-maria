@@ -21,6 +21,10 @@ from observatorio_maria.query.execution import (
     execute_readonly_query,
     sanitize_purpose,
 )
+from observatorio_maria.query.sanitization import (
+    format_untrusted_data_xml,
+    sanitize_untrusted_text,
+)
 from observatorio_maria.query.validator import (
     QuerySchema,
     build_query_schema,
@@ -81,6 +85,7 @@ class QueryRunner:
         *,
         max_rows: int = 100,
         timeout_seconds: float = 15.0,
+        max_cost: float = 0.0,
         max_per_call: int = 4,
         on_activity: ActivityCallback | None = None,
         calls_left: int = 0,
@@ -90,6 +95,7 @@ class QueryRunner:
         self.result_store = result_store
         self.max_rows = max_rows
         self.timeout_seconds = timeout_seconds
+        self.max_cost = max_cost
         self.max_per_call = max_per_call
         self.on_activity = on_activity
         self.calls_left = calls_left
@@ -172,13 +178,14 @@ class QueryRunner:
 
         try:
             schema = await self._get_query_schema(datasource)
-            validated_sql = validate_query(sql, schema)
+            validated_sql = validate_query(sql, schema, max_rows=self.max_rows)
             engine = await self._get_engine(datasource)
             cols, rows, trunc, col_types = await execute_readonly_query(
                 engine,
                 validated_sql,
                 max_rows=self.max_rows,
                 timeout_seconds=self.timeout_seconds,
+                max_cost=self.max_cost,
             )
             result = self.result_store.add(
                 datasource.id,
@@ -188,10 +195,21 @@ class QueryRunner:
                 truncated=trunc,
                 column_types=col_types,
             )
+            sanitized_rows = [
+                [sanitize_untrusted_text(val) for val in row] for row in rows
+            ]
+            untrusted_xml = format_untrusted_data_xml(
+                datasource.name or datasource.id,
+                result.result_id,
+                result.columns,
+                sanitized_rows,
+                truncated=result.truncated,
+            )
             return {
                 'result_id': result.result_id,
                 'columns': result.columns,
-                'rows': result.rows,
+                'rows': sanitized_rows,
+                'untrusted_data': untrusted_xml,
                 'truncated': result.truncated,
                 'calls_left': self.calls_left,
             }

@@ -159,3 +159,26 @@ async def test_stream_is_traced_and_measured(
         for p in metric_points(metric_reader, 'gen_ai.client.token.usage')
     }
     assert tokens == {'input': 12, 'output': 5}
+
+
+async def test_stream_rejects_when_token_ceiling_reached(
+    client, conversation, session
+):
+    db_conv = await session.get(Conversation, UUID(conversation['id']))
+    db_conv.total_tokens = 100_000
+    await session.commit()
+
+    response = await client.post(
+        stream_url(conversation), json={'content': 'Tentativa de stream'}
+    )
+    assert response.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert 'Limite de tokens da conversa atingido' in response.json()['detail']
+
+
+async def test_stream_accumulates_tokens(client, conversation):
+    use_model(answering_model())
+
+    await stream(client, conversation)
+
+    conv_res = await client.get(f'/conversations/{conversation["id"]}')
+    assert conv_res.json()['total_tokens'] == 17  # noqa: PLR2004

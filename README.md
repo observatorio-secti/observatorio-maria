@@ -16,6 +16,7 @@ API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa cient�
 | **Observabilidade** | Traces, métricas e logs via OpenTelemetry. O caminho de cada resposta da IA fica visível no Arize Phoenix. Stack local com Grafana, Tempo, Loki e Prometheus. |
 | **Catálogo de dados** | Descreve bancos externos para a IA: o que o modelo **enxerga**, como interpreta cada tabela e coluna e o que pode **consultar**. Seed via YAML, sincronização somente leitura com o schema real, exportação e prévia do contexto. Primeira fonte: o banco do módulo de fomento. |
 | **Defasagem do schema** | Verificação periódica (e sob demanda) se a origem mudou desde a última sincronização, com o diff do que mudou, sincronização automática opcional e leitura dos valores de enum, apontando os que ainda não têm descrição. |
+| **Segurança e Privacidade** | Quarentena semântica contra prompt injection indireto (`<untrusted_database_data>`), mascaramento preventivo de PII (CPF e e-mail via LGPD), limites de consulta (timeout, teto de linhas, consultas por chamada) e teto de tokens por conversa. |
 | **Demo** | Página em `/demo/` para conversar com a Maria, visualizar o contrato de blocos e configurar o catálogo de dados. |
 
 ---
@@ -178,7 +179,9 @@ As variáveis são lidas do ambiente e do `.env`.
 | `QUERY_MAX_ROWS` | Limite máximo de linhas devolvidas por consulta | `100` |
 | `QUERY_TIMEOUT_SECONDS` | Limite de tempo de execução por consulta na origem | `15` |
 | `QUERY_MAX_PER_CALL` | Máximo de consultas SQL executadas por chamada do modelo | `4` |
+| `QUERY_MAX_ESTIMATED_COST` | Custo estimado máximo de consulta via EXPLAIN no PostgreSQL (0 desliga) | `50000` |
 | `MARIA_AGENT_MAX_MODEL_CALLS` | Orçamento máximo de chamadas ao modelo por resposta da Maria | `3` |
+| `CONVERSATION_TOKEN_CEILING` | Teto de tokens acumulados por conversa. `0` desliga | `100000` |
 | `FOMENTO_DATABASE_URL` | URL do banco do fomento, com driver assíncrono (`postgresql+psycopg://…`). O nome da variável é definido por fonte no catálogo | — |
 
 ---
@@ -333,6 +336,28 @@ Na sincronização, 422 indica a variável de conexão não definida e 502 indic
 - Os níveis `fast`, `medium` e `advanced` são **internos**: a aplicação decide qual usar, e hoje o chat usa `medium` (`CHAT_MODEL_TIER` em `services/chat.py`). O nível e o modelo de cada resposta ficam gravados no banco, para auditoria, mas não aparecem na API.
 - Para trocar o modelo de um nível, altere a variável e reinicie. Para outro provedor, instale o pacote do LangChain correspondente e use o prefixo dele, por exemplo `LLM_ADVANCED_MODEL="anthropic:<modelo>"` com `langchain-anthropic`.
 - O prompt de sistema da Maria fica em `src/observatorio_maria/llm/prompts.py`.
+
+---
+
+## 🛡️ Segurança e Privacidade
+
+A Maria implementa múltiplas camadas de proteção para salvaguardar dados de cidadãos e manter a integridade operacional do agente:
+
+1. **Quarentena Semântica de Dados Não Confiáveis:**
+   - Todos os dados retornados de consultas a bancos externos são universalmente empacotados em delimitadores estruturados `<untrusted_database_data>`.
+   - Delimitadores de fechamento contidos nos textos são escapados (`&lt;/untrusted_database_data&gt;`), neutralizando tentativas de fuga do bloco de quarentena.
+   - O prompt de sistema define precedência estrita: o modelo é orientado a tratar os dados como meramente documentais e a ignorar qualquer tentativa de injeção de comandos (ex.: "ignore diretrizes anteriores", redefinição de papel ou chamadas falsas de ferramentas).
+
+2. **Privacidade e LGPD:**
+   - **Mascaramento leve de PII:** Padrões identificáveis de CPF e endereços de e-mail são mascarados preventivamente (`[CPF MASCARADO]`, `[E-MAIL MASCARADO]`) pelo `QueryRunner` antes de serem passados ao contexto do modelo. Os bancos de dados de origem permanecem intactos.
+   - **Colunas com acesso agregado:** Colunas sensíveis (como CEPs e identificadores) podem ser configuradas no catálogo com acesso estrito a agregações (`aggregate`), impedindo a leitura direta de valores individuais.
+   - **Ocultação em telemetria:** Parâmetros `OPENINFERENCE_HIDE_INPUTS` e `OPENINFERENCE_HIDE_OUTPUTS` permitem omitir textos em traces de observabilidade.
+
+3. **Limites de Recursos e Proteção contra DoS:**
+   - **Dry-run com EXPLAIN:** Antes da execução no PostgreSQL, um dry-run via `EXPLAIN (FORMAT JSON)` inspeciona o custo estimado (`Total Cost`). Se ultrapassar `QUERY_MAX_ESTIMATED_COST`, a consulta é barrada preventivamente sem tocar nos dados, devolvendo mensagem orientativa para a Maria refinar os filtros.
+   - **Truncamento defensivo por célula:** Textos de células longas são limitados a 2.000 caracteres, prevenindo esgotamento intencional da janela de contexto (*Context Flooding*).
+   - **Limites de execução:** Teto máximo de linhas por consulta (`QUERY_MAX_ROWS`), timeout de banco (`QUERY_TIMEOUT_SECONDS`), máximo de consultas SQL por chamada (`QUERY_MAX_PER_CALL`) e orçamento de chamadas ao modelo (`MARIA_AGENT_MAX_MODEL_CALLS`).
+   - **Teto de tokens por conversa:** A conversa é bloqueada ao atingir `CONVERSATION_TOKEN_CEILING`, protegendo custos e prevenindo loops ou conversas excessivamente longas.
 
 ---
 

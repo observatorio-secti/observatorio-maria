@@ -201,6 +201,33 @@ def _check_functions(stmt: exp.Expression) -> None:
                 raise QueryValidationError(f"Função '{f_name}' não permitida")
 
 
+def _check_limit(stmt: exp.Expression, max_rows: int = 100) -> None:
+    for limit_node in stmt.find_all(exp.Limit):
+        expr = limit_node.expression
+        if isinstance(expr, exp.Neg):
+            raise QueryValidationError(
+                'O limite da consulta deve ser um inteiro positivo'
+            )
+        if isinstance(expr, exp.Literal) and expr.is_int:
+            val = int(expr.this)
+        else:
+            try:
+                val = int(expr.name or str(expr))
+            except (ValueError, TypeError) as exc:
+                raise QueryValidationError(
+                    'O limite da consulta deve ser um número inteiro'
+                ) from exc
+        if val <= 0:
+            raise QueryValidationError(
+                f'O limite da consulta ({val}) deve ser um inteiro positivo'
+            )
+        if val > max_rows:
+            raise QueryValidationError(
+                f'O limite solicitado na consulta ({val}) excede o '
+                f'máximo permitido ({max_rows})'
+            )
+
+
 def _qualify_query(
     stmt: exp.Expression, schema: QuerySchema
 ) -> exp.Expression:
@@ -268,7 +295,7 @@ def _check_aggregate_columns(
                     )
 
 
-def validate_query(sql: str, schema: QuerySchema) -> str:
+def validate_query(sql: str, schema: QuerySchema, max_rows: int = 100) -> str:
     """Valida a consulta SQL e devolve o SQL reescrito."""
     if not sql or not sql.strip():
         raise QueryValidationError('Consulta vazia')
@@ -282,6 +309,7 @@ def validate_query(sql: str, schema: QuerySchema) -> str:
     _check_tables(stmt, schema)
     _check_stars(stmt)
     _check_functions(stmt)
+    _check_limit(stmt, max_rows)
 
     qualified = _qualify_query(stmt, schema)
     all_sources: dict[str, Any] = {}

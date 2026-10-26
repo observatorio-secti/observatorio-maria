@@ -7,11 +7,13 @@ from sqlalchemy import (
     JSON,
     DateTime,
     ForeignKey,
+    Integer,
     String,
     Text,
     TypeDecorator,
     UniqueConstraint,
     false,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, registry, relationship
 
@@ -49,6 +51,9 @@ class Conversation:
         init=False, primary_key=True, default_factory=uuid4
     )
     title: Mapped[str | None] = mapped_column(String(200), default=None)
+    total_tokens: Mapped[int] = mapped_column(
+        Integer, server_default=text('0'), default=0
+    )
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime, init=False, default_factory=utcnow
     )
@@ -120,6 +125,9 @@ class CatalogDataSource:
     connection_env: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text, default=None)
     instructions: Mapped[str | None] = mapped_column(Text, default=None)
+    examples: Mapped[list[dict[str, str]]] = mapped_column(
+        JSON, default_factory=list, server_default=text("'[]'")
+    )
     schemas: Mapped[list[str]] = mapped_column(
         JSON, default_factory=lambda: ['public']
     )
