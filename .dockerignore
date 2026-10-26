@@ -1,0 +1,17 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+*.db
+.coverage
+htmlcov
+.pytest_cache
+.ruff_cache
+**/__pycache__
+tests
+data
+observability
+openspec
+.claude
+.agents
