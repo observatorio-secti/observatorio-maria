@@ -76,18 +76,30 @@ A consulta SHALL usar apenas funções de uma lista permitida (agregações, dat
 - **THEN** a consulta é recusada antes de chegar à origem
 
 ### Requirement: Limite de linhas
-Toda consulta SHALL devolver no máximo `QUERY_MAX_ROWS` linhas (padrão 100), mesmo que peça mais ou não tenha `LIMIT`. O resultado MUST informar se foi truncado.
+Toda consulta SHALL devolver no máximo `QUERY_MAX_ROWS` linhas (padrão 100). Caso a consulta contenha cláusula `LIMIT`, o valor MUST ser inteiro positivo e MUST NOT exceder `QUERY_MAX_ROWS`; caso exceda, a consulta MUST ser recusada antes da execução. Se omitido, o limite máximo continua aplicado pelo executor, e o resultado MUST informar se foi truncado.
+
+#### Scenario: Limite excessivo recusado
+- **WHEN** o modelo envia consulta com `LIMIT 500` e `QUERY_MAX_ROWS` é 100
+- **THEN** a consulta é recusada informando que o limite solicitado excede o máximo permitido
+
+#### Scenario: Limite aceito
+- **WHEN** o modelo envia consulta com `LIMIT 10`
+- **THEN** a consulta é aceita e executada
 
 #### Scenario: Resultado truncado
-- **WHEN** a consulta produziria 500 linhas e `QUERY_MAX_ROWS` é 100
+- **WHEN** a consulta produziria 500 linhas sem cláusula `LIMIT` e `QUERY_MAX_ROWS` é 100
 - **THEN** o resultado tem 100 linhas e indica que foi truncado
 
 ### Requirement: Limite de tempo
-Toda consulta SHALL ser interrompida após `QUERY_TIMEOUT_SECONDS` (padrão 15). A interrupção MUST virar uma recusa por tempo esgotado e MUST NOT derrubar a resposta.
+Toda consulta SHALL ser interrompida após `QUERY_TIMEOUT_SECONDS` (padrão 15). Em bancos PostgreSQL, a execução MUST definir `statement_timeout` correspondente na sessão da transação para cancelamento no servidor. A interrupção por timeout de cliente ou cancelamento de statement no banco MUST virar uma recusa por tempo esgotado e MUST NOT derrubar a resposta.
 
-#### Scenario: Consulta lenta
-- **WHEN** a consulta passa do limite de tempo
-- **THEN** ela é cancelada na origem e o modelo recebe que o tempo se esgotou
+#### Scenario: Consulta lenta interrompida no cliente
+- **WHEN** a consulta passa do limite de tempo no cliente
+- **THEN** ela é cancelada e o modelo recebe que o tempo se esgotou
+
+#### Scenario: Consulta cancelada por statement_timeout
+- **WHEN** o servidor PostgreSQL interrompe a consulta por statement_timeout
+- **THEN** ela é tratada como recusa por tempo esgotado sem expor dados de conexão
 
 ### Requirement: Recusas e erros explicados ao modelo
 Recusa de validação, erro da origem (sintaxe, tipo) e origem inacessível SHALL voltar ao modelo como resultado da consulta, com um motivo curto que permita corrigi-la, e MUST NOT encerrar a resposta com erro. O motivo MUST NOT conter URLs de conexão nem credenciais.
@@ -135,3 +147,48 @@ Cada consulta executada SHALL produzir um resultado com identificador próprio, 
 #### Scenario: Resultado referenciável
 - **WHEN** uma consulta é executada com sucesso
 - **THEN** o modelo recebe um identificador do resultado que pode usar para pedir um gráfico ou tabela na mesma resposta
+
+### Requirement: Envelopamento e sanitização de dados não confiáveis
+Todo resultado de consulta retornado à IA SHALL ser envelopado em tags semânticas `<untrusted_database_data>` identificando a fonte. O sistema MUST escapar tags de fechamento presentes nos dados do banco (convertendo em entidades seguras) e MUST truncar textos de células individuais em no máximo 2.000 caracteres indicando truncamento.
+
+#### Scenario: Envelopamento com delimitadores seguros
+- **WHEN** a consulta retorna linhas de projetos com resumo textual
+- **THEN** a resposta da ferramenta contém os dados encapsulados em `<untrusted_database_data>` e registros estruturados
+
+#### Scenario: Escape de tentativa de quebra de delimitador
+- **WHEN** o campo de texto do banco contém `</untrusted_database_data>`
+- **THEN** a tag é escapada como `&lt;/untrusted_database_data&gt;` impedindo a fuga do bloco
+
+#### Scenario: Truncamento de célula longa
+- **WHEN** uma célula de texto do banco possui 5.000 caracteres
+- **THEN** o texto é truncado em 2.000 caracteres com sufixo indicando truncamento
+
+### Requirement: Mascaramento preventivo de dados pessoais
+O sistema SHALL aplicar filtro leve de privacidade sobre valores textuais retornados em consultas antes do envio à IA, substituindo padrões identificáveis de CPF por `[CPF MASCARADO]` e endereços de e-mail por `[E-MAIL MASCARADO]`, sem alterar os dados no banco de origem.
+
+#### Scenario: CPF mascarado no resumo
+- **WHEN** o resumo de um projeto contém `pesquisador CPF 123.456.789-00`
+- **THEN** o valor entregue à IA substitui o número por `[CPF MASCARADO]`
+
+#### Scenario: E-mail mascarado no texto
+- **WHEN** o texto retornado contém `contato: fulano@provedor.com.br`
+- **THEN** o valor entregue à IA substitui o endereço por `[E-MAIL MASCARADO]`
+
+### Requirement: Dry-run de custo estimado com EXPLAIN
+Em bancos de dados PostgreSQL, o sistema SHALL executar um dry-run via `EXPLAIN (FORMAT JSON)` antes da execução da consulta e inspecionar o custo total estimado (`Total Cost`). Quando o custo ultrapassar `QUERY_MAX_ESTIMATED_COST` (e o limite for maior que zero), a consulta MUST ser recusada antes de ser executada na origem, devolvendo ao modelo uma explicação com os custos e orientação para restringir a busca.
+
+#### Scenario: Custo estimado dentro do limite aceito
+- **WHEN** o modelo envia consulta com custo estimado de 1.200 em relação a um teto de 50.000
+- **THEN** a consulta é validada pelo dry-run e executada normalmente
+
+#### Scenario: Custo estimado excessivo recusado
+- **WHEN** o modelo envia consulta sem filtros cujo custo estimado pelo PostgreSQL atinge 85.000 (acima do teto de 50.000)
+- **THEN** a execução é interrompida antes de tocar nas tabelas e o modelo recebe mensagem explicando que o custo foi excedido com sugestão de filtros
+
+#### Scenario: Verificação desativada com teto zero
+- **WHEN** `QUERY_MAX_ESTIMATED_COST` é configurado como 0
+- **THEN** a consulta é executada sem bloqueio por custo de dry-run
+
+#### Scenario: Compatibilidade com dialeto SQLite
+- **WHEN** a consulta é executada contra uma fonte SQLite
+- **THEN** o sistema executa o dry-run compatível ou prossegue para execução sem exigir o formato numérico do PostgreSQL

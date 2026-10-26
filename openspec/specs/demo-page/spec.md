@@ -24,7 +24,7 @@ A página SHALL permitir digitar e enviar uma mensagem assim que é aberta. Sem 
 - **THEN** uma conversa é criada, aparece na lista com o título da pergunta e exibe a resposta da Maria
 
 ### Requirement: Feedback durante a geração
-Enquanto aguarda a resposta, a página SHALL indicar que a Maria está respondendo até o primeiro fragmento chegar e, a partir daí, SHALL exibir o texto progressivamente, renderizado em Markdown. A página MUST impedir envios duplicados até o fim da resposta.
+Enquanto aguarda a resposta, a página SHALL indicar que a Maria está respondendo até o primeiro fragmento chegar e, a partir daí, SHALL exibir o texto progressivamente, renderizado em Markdown. A página MUST impedir envios duplicados até o fim da resposta. Caso a API retorne HTTP 429 por teto de tokens da conversa excedido, a página MUST exibir banner com mensagem explicativa e orientação para criar uma nova conversa.
 
 #### Scenario: Aguardando resposta
 - **WHEN** o usuário envia uma mensagem
@@ -33,6 +33,10 @@ Enquanto aguarda a resposta, a página SHALL indicar que a Maria está responden
 #### Scenario: Texto aparecendo
 - **WHEN** a Maria gera a resposta
 - **THEN** o texto aparece na mensagem do assistente à medida que é gerado e, ao final, a mensagem exibe o horário da versão persistida
+
+#### Scenario: Banner de limite de tokens
+- **WHEN** o usuário tenta enviar mensagem para conversa com cota de tokens esgotada
+- **THEN** a página exibe banner informando que o teto de tokens da conversa foi atingido e orientando a iniciar uma nova conversa
 
 ### Requirement: Gestão de conversas na página
 A página SHALL listar as conversas e permitir criar, abrir, renomear e excluir conversas.
