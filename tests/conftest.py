@@ -41,7 +41,7 @@ os.environ['OTEL_SDK_DISABLED'] = 'true'
 from observatorio_maria.app import app  # noqa: E402
 from observatorio_maria.database import (
     SessionLocal,
-    enable_sqlite_foreign_keys,
+    configure_sqlite,
     get_session,
 )
 from observatorio_maria.llm.registry import (
@@ -156,7 +156,7 @@ async def engine():
     engine = create_async_engine(
         'sqlite+aiosqlite:///:memory:', poolclass=StaticPool
     )
-    enable_sqlite_foreign_keys(engine)
+    configure_sqlite(engine)
     async with engine.begin() as conn:
         await conn.run_sync(table_registry.metadata.create_all)
     yield engine

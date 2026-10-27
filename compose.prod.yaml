@@ -1,46 +1,29 @@
 # Produção da Maria, isolada do observatório de fomento.
 #   docker compose -f compose.prod.yaml up -d --build
 #
-# Projeto, banco, volume e rede próprios. A API só entra na rede do fomento
-# para ler o banco dele (FOMENTO_DATABASE_URL apontando para o host "db").
+# Projeto e volume próprios. Conversas e catálogo ficam num arquivo SQLite no
+# volume maria_data. A API só entra na rede do fomento para ler o banco dele
+# (FOMENTO_DATABASE_URL apontando para o host "db").
 name: observatorio-maria
 
 services:
-  maria-db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ${MARIA_POSTGRES_DB:-maria}
-      POSTGRES_USER: ${MARIA_POSTGRES_USER:?Configure MARIA_POSTGRES_USER no arquivo .env}
-      POSTGRES_PASSWORD: ${MARIA_POSTGRES_PASSWORD:?Configure MARIA_POSTGRES_PASSWORD no arquivo .env}
-    volumes:
-      - maria_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    networks: [maria]
-    restart: unless-stopped
-
   maria-api:
     build: .
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+psycopg://${MARIA_POSTGRES_USER}:${MARIA_POSTGRES_PASSWORD}@maria-db:5432/${MARIA_POSTGRES_DB:-maria}
+      DATABASE_URL: sqlite+aiosqlite:////app/data/maria.db
       ENVIRONMENT: production
+    volumes:
+      - maria_data:/app/data
     ports:
       - "${MARIA_API_PORT:-11309}:8000"
-    depends_on:
-      maria-db:
-        condition: service_healthy
-    networks: [maria, fomento]
+    networks: [fomento]
     restart: unless-stopped
 
 networks:
-  maria:
   fomento:
     external: true
     name: ${FOMENTO_NETWORK:?Configure FOMENTO_NETWORK com a rede do compose do fomento (docker network ls)}
 
 volumes:
-  maria_postgres_data:
+  maria_data:

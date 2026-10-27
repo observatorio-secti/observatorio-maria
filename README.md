@@ -163,13 +163,13 @@ Com a stack no ar e `OTEL_SDK_DISABLED=false`, a API passa a enviar telemetria a
 
 ## 🚢 Deploy em produção
 
-A Maria sobe em um projeto Docker Compose próprio (`compose.prod.yaml`), ao lado do observatório de fomento e sem alterar o compose dele. Tem banco Postgres próprio, só **lê** o banco do fomento pela rede Docker dele e expõe a API na porta `11309`.
+A Maria sobe em um projeto Docker Compose próprio (`compose.prod.yaml`), ao lado do observatório de fomento e sem alterar o compose dele. Guarda conversas e catálogo num SQLite dentro de um volume Docker, sem servidor de banco próprio, só **lê** o banco do fomento pela rede Docker dele e expõe a API na porta `11309`.
 
 ```bash
 docker compose -f compose.prod.yaml up -d --build
 ```
 
-Antes de subir, crie o usuário somente leitura no banco do fomento e configure `FOMENTO_NETWORK`, `MARIA_POSTGRES_*` e `FOMENTO_DATABASE_URL`. O passo a passo completo, com operação e cuidados, está em [docs/deploy.md](docs/deploy.md).
+Antes de subir, crie o usuário somente leitura no banco do fomento e configure `FOMENTO_NETWORK` e `FOMENTO_DATABASE_URL`. O passo a passo completo, com operação e cuidados, está em [docs/deploy.md](docs/deploy.md).
 
 ---
 

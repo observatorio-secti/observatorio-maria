@@ -10,8 +10,9 @@ from observatorio_maria.settings import Settings
 settings = Settings()
 
 
-def enable_sqlite_foreign_keys(engine: AsyncEngine):
-    """O SQLite só aplica ON DELETE CASCADE com foreign_keys ligado."""
+def configure_sqlite(engine: AsyncEngine):
+    """Liga foreign_keys, sem o qual o SQLite ignora ON DELETE CASCADE, e o
+    WAL, que deixa as leituras seguirem durante uma escrita."""
     if engine.dialect.name != 'sqlite':
         return
 
@@ -19,11 +20,12 @@ def enable_sqlite_foreign_keys(engine: AsyncEngine):
     def _set_pragma(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute('PRAGMA foreign_keys=ON')
+        cursor.execute('PRAGMA journal_mode=WAL')
         cursor.close()
 
 
 engine = create_async_engine(settings.DATABASE_URL)
-enable_sqlite_foreign_keys(engine)
+configure_sqlite(engine)
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 

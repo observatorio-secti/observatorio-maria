@@ -5,18 +5,18 @@ A Maria roda no mesmo servidor do observatório de fomento sem alterar nada no c
 ## Como fica
 
 ```text
-┌──────────── projeto do fomento ─────────────┐   ┌──────── projeto observatorio-maria ────────┐
-│                                             │   │                                            │
-│  web ── api ── db (Postgres do fomento) ◄───┼───┼── maria-api ── maria-db (Postgres da Maria) │
-│                                             │   │       │                                    │
-└──────────── rede <fomento>_default ─────────┘   └───────┼──────── rede maria ────────────────┘
+┌──────────── projeto do fomento ─────────────┐   ┌──── projeto observatorio-maria ────┐
+│                                             │   │                                    │
+│  web ── api ── db (Postgres do fomento) ◄───┼───┼── maria-api ── volume maria_data   │
+│                                             │   │       │        (SQLite da Maria)   │
+└──────────── rede <fomento>_default ─────────┘   └───────┼────────────────────────────┘
                                                           ▼
                                                     host :11309
 ```
 
-- **Projeto próprio** (`name: observatorio-maria`): containers, volumes e redes não colidem com os do fomento.
-- **Banco próprio**: `maria-db` guarda conversas e catálogo no volume `maria_postgres_data`, sem porta exposta no host.
-- **Nomes distintos** (`maria-db`, `maria-api`): na rede do fomento, `db` continua resolvendo para o Postgres do fomento.
+- **Projeto próprio** (`name: observatorio-maria`): containers e volumes não colidem com os do fomento.
+- **Banco próprio sem servidor**: conversas e catálogo ficam num arquivo SQLite (`/app/data/maria.db`) no volume `maria_data`. Não há Postgres da Maria em produção.
+- **Nome distinto** (`maria-api`): na rede do fomento, `db` continua resolvendo para o Postgres do fomento.
 - **Acesso ao fomento**: a `maria-api` entra na rede do fomento como `external` e consulta o banco com um usuário somente leitura.
 - **Porta**: a API fica em `11309` (configurável por `MARIA_API_PORT`).
 
@@ -28,7 +28,7 @@ Ao iniciar, o container aplica as migrações (`alembic upgrade head`) e sobe o 
 |---|---|
 | `Dockerfile` | Imagem Python 3.13 com as dependências do `poetry.lock`, usuário sem privilégios de root |
 | `.dockerignore` | Mantém `.env`, `*.db`, `.venv`, testes etc. fora da imagem |
-| `compose.prod.yaml` | Serviços `maria-db` e `maria-api`, rede própria e rede externa do fomento |
+| `compose.prod.yaml` | Serviço `maria-api`, volume `maria_data` com o SQLite e rede externa do fomento |
 
 ## Passo a passo
 
@@ -73,9 +73,6 @@ Além das variáveis da [Configuração](../README.md#️-configuração), o dep
 
 | Variável | Descrição | Exemplo |
 |---|---|---|
-| `MARIA_POSTGRES_USER` | Usuário do Postgres da Maria | `maria` |
-| `MARIA_POSTGRES_PASSWORD` | Senha do Postgres da Maria | senha forte |
-| `MARIA_POSTGRES_DB` | Nome do banco da Maria | `maria` (padrão) |
 | `MARIA_API_PORT` | Porta da API no host | `11309` (padrão) |
 | `FOMENTO_NETWORK` | Rede do compose do fomento (passo 1) | `observatorio-fomento_default` |
 | `FOMENTO_DATABASE_URL` | Conexão do usuário somente leitura, pelo host `db` | `postgresql+psycopg://maria_leitura:<senha>@db:5432/<POSTGRES_DB>` |
@@ -87,7 +84,7 @@ OTEL_SDK_DISABLED=true   # a menos que a stack de observabilidade esteja no ar
 DEMO_ENABLED=false       # não expõe /demo/
 ```
 
-O `DATABASE_URL` do `.env` é ignorado: o `compose.prod.yaml` o sobrescreve para apontar para o `maria-db`.
+O `DATABASE_URL` do `.env` é ignorado: o `compose.prod.yaml` o sobrescreve para apontar para o SQLite no volume (`sqlite+aiosqlite:////app/data/maria.db`).
 
 ### 4. Subir
 
@@ -123,9 +120,33 @@ Libere a porta `11309` no firewall, ou aponte o proxy reverso para ela.
 | Atualizar após `git pull` | `docker compose -f compose.prod.yaml up -d --build` (migrações rodam sozinhas) |
 | Logs | `docker compose -f compose.prod.yaml logs -f maria-api` |
 | Parar | `docker compose -f compose.prod.yaml down` |
-| Backup do banco da Maria | `docker compose -f compose.prod.yaml exec maria-db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > maria.sql` |
+| Backup do banco da Maria | Ver abaixo |
 
-Não use `down -v` sem querer apagar o banco: a opção remove o volume `maria_postgres_data`.
+Não use `down -v` sem querer apagar o banco: a opção remove o volume `maria_data`.
+
+### Backup
+
+O SQLite usa WAL, então copiar só o `maria.db` com a API no ar pode perder as últimas escritas. Use a API de backup do próprio SQLite, que gera uma cópia consistente sem parar a Maria:
+
+```bash
+docker compose -f compose.prod.yaml exec maria-api python -c \
+  "import sqlite3; b = sqlite3.connect('/app/data/maria-backup.db'); sqlite3.connect('/app/data/maria.db').backup(b); b.execute('PRAGMA journal_mode=DELETE'); b.close()"
+docker compose -f compose.prod.yaml cp maria-api:/app/data/maria-backup.db ./maria-backup.db
+```
+
+### Migração do Postgres para o SQLite
+
+Versões anteriores deste compose subiam um Postgres próprio (`maria-db`). Os dados dele não são migrados: conversas antigas se perdem, e o catálogo é recriado pelo seed. Para trocar:
+
+```bash
+docker compose -f compose.prod.yaml up -d --build --remove-orphans
+```
+
+O `--remove-orphans` remove o container `maria-db`, que não está mais no compose. Depois, refaça o seed e a sincronização do passo 5. O volume antigo continua no servidor até ser apagado à mão, depois de conferir que a Maria está funcionando:
+
+```bash
+docker volume rm observatorio-maria_maria_postgres_data
+```
 
 ## A Maria diz que não tem acesso aos dados
 

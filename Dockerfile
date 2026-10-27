@@ -21,7 +21,10 @@ COPY alembic.ini ./
 COPY migrations ./migrations
 COPY catalog ./catalog
 
-RUN useradd --create-home --uid 1000 maria && chown -R maria /app
+# /app/data recebe o volume do banco SQLite; o volume novo herda o dono.
+RUN useradd --create-home --uid 1000 maria \
+    && mkdir -p /app/data \
+    && chown -R maria /app
 USER maria
 
 EXPOSE 8000
