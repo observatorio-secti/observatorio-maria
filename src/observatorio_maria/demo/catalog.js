@@ -319,11 +319,14 @@ function renderEntity() {
   $('cat-columns').replaceChildren(...entity.columns.flatMap(renderColumnRows));
 }
 
-// Valores conhecidos: os do enum da origem (na ordem dela) mais os descritos
-// que não existem mais (obsoletos); sem enum, os valores editoriais.
+// Valores da origem: os do enum ou, sem enum, os observados nos dados.
+const sourceValues = (column) => column.enum_values ?? column.observed_values ?? null;
+
+// Valores conhecidos: os da origem (na ordem dela) mais os informados que não
+// existem nela (obsoletos); sem valores da origem, os valores editoriais.
 function valueRows(column) {
   const descriptions = new Map(column.values.map((v) => [String(v.value), v.description ?? '']));
-  const values = column.enum_values ?? column.values.map((v) => String(v.value));
+  const values = sourceValues(column) ?? column.values.map((v) => String(v.value));
   const rows = values.map((value) => ({ value, description: descriptions.get(value) ?? '', obsolete: false }));
   column.obsolete_values.forEach((value) => rows.push({ value, description: descriptions.get(value) ?? '', obsolete: true }));
   return rows;
@@ -345,7 +348,7 @@ function renderValuesEditor(column) {
         code.remove(); input.remove(); status.remove();
       });
       status.append(remove);
-    } else if (!row.description && column.enum_values) {
+    } else if (!row.description && sourceValues(column)) {
       status.append(badge('sem descrição', 'warn'));
     }
     inputs.push({ row, input });
@@ -357,11 +360,16 @@ function renderValuesEditor(column) {
   save.addEventListener('click', () => {
     const values = inputs
       .map(({ row, input }) => ({ value: row.value, description: nullable(input.value) }))
-      // Com enum, valor sem descrição não precisa ser guardado: ele já vem da origem.
-      .filter((v) => !column.enum_values || v.description || !column.enum_values.includes(v.value));
+      // Valor da origem sem descrição não precisa ser guardado: ele já vem dela.
+      .filter((v) => !sourceValues(column) || v.description || !sourceValues(column).includes(v.value));
     patchColumn(column, { values });
   });
-  actions.append(save, el('span', { class: 'muted small' }, column.enum_values ? 'Valores lidos do enum da origem.' : 'Valores informados no catálogo.'));
+  const origin = column.enum_values
+    ? 'Valores lidos do enum da origem.'
+    : column.observed_values
+      ? 'Valores lidos dos dados da origem.'
+      : 'Valores informados no catálogo.';
+  actions.append(save, el('span', { class: 'muted small' }, origin));
   editor.append(actions);
   return editor;
 }
@@ -507,6 +515,22 @@ async function loadContext() {
   $('cat-context').textContent = data.enabled
     ? data.content
     : 'Fonte desativada: o modelo não recebe nada sobre ela.';
+  renderRejectedExamples(data.enabled ? data.rejected_examples : []);
+}
+
+// Exemplos few-shot que não passam nas regras de consulta ficam fora do texto.
+function renderRejectedExamples(rejected) {
+  const box = $('cat-rejected-examples');
+  box.hidden = !rejected.length;
+  if (!rejected.length) return box.replaceChildren();
+  const items = rejected.map((r) => {
+    const li = el('li');
+    li.append(el('strong', {}, r.question), ': ', r.reason);
+    return li;
+  });
+  const list = el('ul');
+  list.append(...items);
+  box.replaceChildren(el('strong', {}, `${rejected.length} exemplo(s) fora do contexto`), list);
 }
 
 function showView(view) {

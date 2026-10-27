@@ -36,6 +36,11 @@ TOOL_RULES_PROMPT = (
     "MATCH_TEXT(coluna, 'termo1', 'termo2', ...) (ex.: "
     "MATCH_TEXT(p.resumo, 'dengue', 'arbovirose')). Nunca use MATCH_TEXT "
     'como operador infixo nem operadores como %.\n'
+    '- Em filtros por colunas de texto, use os valores exatamente como '
+    'listados no catálogo. Se uma consulta filtrada voltar vazia ou nula '
+    '(com o campo hint), confira os valores existentes com SELECT DISTINCT '
+    'e refaça a consulta antes de afirmar que não há dados, enquanto houver '
+    'chamadas no orçamento.\n'
     '- Nunca invente ou cite números que não estejam nos resultados '
     'retornados.\n'
     '- Nunca exiba identificadores internos ou UUIDs.\n'

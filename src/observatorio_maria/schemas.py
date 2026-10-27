@@ -290,6 +290,12 @@ class ColumnPublic(BaseModel):
     enum_values: list[str] | None = Field(
         description='Valores do enum na origem; nulo se a coluna não é enum.'
     )
+    observed_values: list[str] | None = Field(
+        description=(
+            'Valores distintos lidos dos dados da origem; nulo se a coluna '
+            'não é categórica, não é lida ou ainda não foi lida.'
+        )
+    )
     undescribed_values: list[str]
     obsolete_values: list[str]
     visible: bool
@@ -371,7 +377,19 @@ class RelationshipUpdate(BaseModel):
     enabled: bool = None
 
 
+class RejectedExample(BaseModel):
+    question: str
+    reason: str
+
+
 class ContextPreview(BaseModel):
     datasource_id: str
     enabled: bool
     content: str = Field(description='Texto em Markdown enviado ao modelo.')
+    rejected_examples: list[RejectedExample] = Field(
+        default_factory=list,
+        description=(
+            'Exemplos few-shot fora do contexto por não passarem nas regras '
+            'de consulta do catálogo.'
+        ),
+    )

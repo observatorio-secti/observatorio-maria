@@ -10,6 +10,10 @@ from sqlglot.optimizer.qualify import qualify
 from sqlglot.optimizer.scope import traverse_scope
 from sqlglot.schema import MappingSchema
 
+from observatorio_maria.catalog.introspection import (
+    ConnectionNotConfiguredError,
+    resolve_connection_url,
+)
 from observatorio_maria.models import (
     CatalogDataSource,
     CatalogEntity,
@@ -71,6 +75,15 @@ class QuerySchema:
     reference_only_tables: set[str] = field(default_factory=set)
     aggregate_columns: set[tuple[str, str]] = field(default_factory=set)
     searchable_columns: set[tuple[str, str]] = field(default_factory=set)
+
+
+def source_dialect(datasource: CatalogDataSource) -> str:
+    """Dialeto SQL da origem, deduzido da URL; SQLite sem conexão."""
+    try:
+        url = resolve_connection_url(datasource.connection_env)
+    except ConnectionNotConfiguredError:
+        return 'sqlite'
+    return 'postgres' if 'postgres' in url or 'psycopg' in url else 'sqlite'
 
 
 def build_query_schema(

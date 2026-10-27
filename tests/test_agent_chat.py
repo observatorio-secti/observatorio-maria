@@ -313,42 +313,42 @@ async def test_history_summarizes_chart_and_table(
     assert 'Projeto 39' not in asst_history.content
 
 
+def _query_turn(call_id: str) -> AIMessage:
+    return AIMessage(
+        content='',
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'SELECT id FROM projetos',
+                },
+                'id': call_id,
+            }
+        ],
+    )
+
+
+def _last_call_warnings(call_messages) -> list[str]:
+    return [
+        m.content
+        for m in call_messages
+        if isinstance(m, SystemMessage) and 'última chamada' in m.content
+    ]
+
+
 @pytest.mark.asyncio
 async def test_budget_exhausted_strips_query_tools_on_last_call(
-    client, session, conversation, fomento_source
+    client, session, conversation, fomento_source, monkeypatch
 ):
+    monkeypatch.setenv('MARIA_AGENT_MAX_MODEL_CALLS', '3')
     await setup_catalog(session, fomento_source)
 
     # 3 chamadas: chamada 1 query, chamada 2 query, chamada 3 última
-    turn1 = AIMessage(
-        content='',
-        tool_calls=[
-            {
-                'name': 'query_data',
-                'args': {
-                    'source': 'fomento',
-                    'sql': 'SELECT id FROM projetos',
-                },
-                'id': 'c1',
-            }
-        ],
-    )
-    turn2 = AIMessage(
-        content='',
-        tool_calls=[
-            {
-                'name': 'query_data',
-                'args': {
-                    'source': 'fomento',
-                    'sql': 'SELECT id FROM projetos',
-                },
-                'id': 'c2',
-            }
-        ],
-    )
     turn3 = AIMessage(content='Concluo com as informações que obtive.')
-
-    model = ScriptedToolChatModel(responses=[turn1, turn2, turn3])
+    model = ScriptedToolChatModel(
+        responses=[_query_turn('c1'), _query_turn('c2'), turn3]
+    )
     set_test_model(model)
 
     res = await client.post(
@@ -359,13 +359,30 @@ async def test_budget_exhausted_strips_query_tools_on_last_call(
     assert len(model.recorded_calls) == 3  # noqa: PLR2004
 
     # Na chamada 3, a última chamada avisou sobre o fim do orçamento
-    last_call_messages = model.recorded_calls[2]
-    system_warnings = [
-        m.content
-        for m in last_call_messages
-        if isinstance(m, SystemMessage) and 'última chamada' in m.content
-    ]
-    assert len(system_warnings) == 1
+    assert len(_last_call_warnings(model.recorded_calls[2])) == 1
+
+
+@pytest.mark.asyncio
+async def test_default_budget_allows_six_model_calls(
+    client, session, conversation, fomento_source, monkeypatch
+):
+    monkeypatch.delenv('MARIA_AGENT_MAX_MODEL_CALLS', raising=False)
+    await setup_catalog(session, fomento_source)
+
+    # O modelo pede consulta em todas as chamadas; a sexta é a última.
+    turns = [_query_turn(f'c{i}') for i in range(1, 6)]
+    turns.append(AIMessage(content='Resposta com os dados obtidos.'))
+    model = ScriptedToolChatModel(responses=turns)
+    set_test_model(model)
+
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/messages',
+        json={'content': 'Pergunta longa'},
+    )
+    assert res.status_code == HTTPStatus.CREATED
+    assert len(model.recorded_calls) == 6  # noqa: PLR2004
+    assert _last_call_warnings(model.recorded_calls[4]) == []
+    assert len(_last_call_warnings(model.recorded_calls[5])) == 1
 
 
 @pytest.mark.asyncio
@@ -718,3 +735,64 @@ async def test_agent_query_cost_exceeded_and_retry(
     data = res.json()
     text = data['assistant_message']['content'][0]['text']
     assert 'Dengue Bahia' in text
+
+
+def _sql_turn(call_id: str, sql: str) -> AIMessage:
+    return AIMessage(
+        content='',
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {'source': 'fomento', 'sql': sql},
+                'id': call_id,
+            }
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_wrong_text_filter_is_corrected_within_default_budget(
+    client, session, conversation, fomento_source, monkeypatch
+):
+    monkeypatch.delenv('MARIA_AGENT_MAX_MODEL_CALLS', raising=False)
+    await setup_catalog(session, fomento_source)
+
+    model = ScriptedToolChatModel(
+        responses=[
+            _sql_turn(
+                'c1',
+                "SELECT SUM(orcamento) FROM projetos WHERE nome = 'Dengue'",
+            ),
+            _sql_turn('c2', 'SELECT DISTINCT nome FROM projetos'),
+            _sql_turn(
+                'c3',
+                'SELECT SUM(orcamento) FROM projetos '
+                "WHERE nome = 'Dengue Bahia'",
+            ),
+            AIMessage(content='O orçamento do projeto é 150.'),
+        ]
+    )
+    set_test_model(model)
+
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/messages',
+        json={'content': 'Qual o orçamento do projeto de dengue?'},
+    )
+
+    assert res.status_code == HTTPStatus.CREATED
+    assert len(model.recorded_calls) == 4  # noqa: PLR2004
+    system_prompt = model.recorded_calls[0][0].content
+    assert 'confira os valores existentes com SELECT DISTINCT' in system_prompt
+
+    null_result = json.loads(model.recorded_calls[1][-1].content)
+    assert null_result['rows'] == [[None]]
+    assert 'SELECT DISTINCT' in null_result['hint']
+    distinct_result = json.loads(model.recorded_calls[2][-1].content)
+    assert 'hint' not in distinct_result
+    corrected = json.loads(model.recorded_calls[3][-1].content)
+    assert corrected['rows'] == [[150.0]]
+    assert 'hint' not in corrected
+    # Ainda havia orçamento: a quarta chamada não é a última.
+    assert _last_call_warnings(model.recorded_calls[3]) == []
+    text = res.json()['assistant_message']['content'][0]['text']
+    assert text == 'O orçamento do projeto é 150.'

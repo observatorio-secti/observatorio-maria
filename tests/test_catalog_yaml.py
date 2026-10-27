@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import pytest
 import yaml
 
 from observatorio_maria.catalog import seed as seed_cli
+from observatorio_maria.catalog.context import check_examples
 from observatorio_maria.catalog.introspection import introspect
 from observatorio_maria.catalog.sync import (
     load_entities,
@@ -228,3 +231,31 @@ def test_seed_cli_reports_invalid_file(tmp_path, capsys):
 
     assert seed_cli.main([str(path)]) == 1
     assert 'Erro' in capsys.readouterr().err
+
+
+async def test_fomento_seed_examples_pass_catalog_rules(session):
+    """Os exemplos do seed do fomento só citam o que o próprio seed deixa
+    visível; um exemplo quebrado ficaria fora do contexto do modelo."""
+    document = load_catalog_file(Path('catalog/fomento.yaml'))
+    await seed_catalog(session, document)
+    datasource = await session.get(CatalogDataSource, document.datasource.id)
+    entities = await load_entities(session, datasource.id)
+    # Simula a origem com tudo o que o seed declara.
+    for entity in entities:
+        entity.present = True
+        for column in entity.columns:
+            column.present = True
+    await session.commit()
+
+    accepted, rejected = check_examples(datasource, entities)
+
+    assert rejected == []
+    assert len(accepted) == len(document.datasource.examples)
+
+
+def test_fomento_seed_has_no_guessed_modalidade_values():
+    document = load_catalog_file(Path('catalog/fomento.yaml'))
+    bolsas = next(e for e in document.entities if e.name == 'bolsas')
+    modalidade = next(c for c in bolsas.columns if c.name == 'modalidade')
+
+    assert not modalidade.values

@@ -176,11 +176,12 @@ As variáveis são lidas do ambiente e do `.env`.
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Endpoint OTLP/HTTP do Collector | `http://localhost:4318` |
 | `OPENINFERENCE_HIDE_INPUTS` / `OPENINFERENCE_HIDE_OUTPUTS` | Oculta o texto das mensagens nos traces (LGPD) | `false` |
 | `CATALOG_CHECK_INTERVAL_SECONDS` | Intervalo da verificação de defasagem do catálogo (também roda ao iniciar). `0` desliga | `3600` |
+| `CATALOG_OBSERVED_VALUES_MAX` | Máximo de valores distintos para uma coluna de texto ter seus valores lidos da origem; acima disso é texto livre | `50` |
 | `QUERY_MAX_ROWS` | Limite máximo de linhas devolvidas por consulta | `100` |
 | `QUERY_TIMEOUT_SECONDS` | Limite de tempo de execução por consulta na origem | `15` |
 | `QUERY_MAX_PER_CALL` | Máximo de consultas SQL executadas por chamada do modelo | `4` |
 | `QUERY_MAX_ESTIMATED_COST` | Custo estimado máximo de consulta via EXPLAIN no PostgreSQL (0 desliga) | `50000` |
-| `MARIA_AGENT_MAX_MODEL_CALLS` | Orçamento máximo de chamadas ao modelo por resposta da Maria | `3` |
+| `MARIA_AGENT_MAX_MODEL_CALLS` | Orçamento máximo de chamadas ao modelo por resposta da Maria | `6` |
 | `CONVERSATION_TOKEN_CEILING` | Teto de tokens acumulados por conversa. `0` desliga | `100000` |
 | `FOMENTO_DATABASE_URL` | URL do banco do fomento, com driver assíncrono (`postgresql+psycopg://…`). O nome da variável é definido por fonte no catálogo | — |
 
@@ -304,7 +305,10 @@ No YAML, entidades e colunas listadas ficam visíveis (e as entidades, consultá
 
 Com `auto_sync` ligado na fonte (API, YAML ou demo), uma defasagem é sincronizada na hora. É seguro: o que é novo entra oculto e o que sumiu fica ausente. O resumo vai para os logs. Fontes desativadas não são verificadas.
 
-**Valores de enum.** A sincronização lê os valores dos tipos enum nativos (ex.: `bolsa_status`). O contexto do modelo lista os valores **atuais** da origem, com as descrições do catálogo. Cada coluna expõe `undescribed_values` (sem descrição, para revisar) e `obsolete_values` (descritos, mas que não existem mais, e que ficam fora do contexto). Colunas texto com `CHECK ... IN (...)`, como `areas_conhecimento.tipo`, não são detectadas e continuam dependendo do YAML.
+**Valores de enum.** A sincronização lê os valores dos tipos enum nativos (ex.: `bolsa_status`). O contexto do modelo lista os valores **atuais** da origem, com as descrições do catálogo. Cada coluna expõe `undescribed_values` (sem descrição, para revisar) e `obsolete_values` (descritos, mas que não existem mais, e que ficam fora do contexto). 
+**Valores observados.** Colunas de texto sem enum têm os valores lidos dos próprios dados (`SELECT DISTINCT ... LIMIT`, somente leitura, com `QUERY_TIMEOUT_SECONDS` por coluna) na sincronização e em toda verificação, mesmo sem defasagem. Só são lidas colunas visíveis, presentes e com acesso `full`, de entidades visíveis, presentes e consultáveis. Colunas ocultas, `aggregate` ou de outros tipos nunca são lidas, e passar uma coluna para `aggregate` apaga os valores guardados. Com até `CATALOG_OBSERVED_VALUES_MAX` valores distintos (nulos não contam), a lista fica em `observed_values`; acima disso, a coluna é texto livre e o campo fica nulo. Esses valores funcionam como os de enum: o contexto do modelo lista os da origem, e valores do YAML que não existem nos dados viram `obsolete_values` e saem do contexto. Eles não entram na impressão digital, porque mudança de dados não é defasagem. Se a leitura de uma coluna falhar, ela mantém os valores anteriores.
+
+**Exemplos few-shot.** Cada fonte pode ter exemplos de pergunta e SQL (`examples` no YAML ou na API), que entram no contexto do modelo. Antes disso, cada exemplo passa pelas mesmas regras de `query_data` (entidades, colunas e funções permitidas). Um exemplo que cita uma coluna inexistente ou oculta fica fora do contexto, e a prévia (`GET .../context`) o lista em `rejected_examples`, com o motivo.
 
 **Fluxo para uma nova fonte:** escrever o YAML (ou criar a fonte pela API) → `task seed` → sincronizar → revisar na demo, olhando a aba "O que a Maria enxerga".
 
@@ -320,7 +324,7 @@ Com `auto_sync` ligado na fonte (API, YAML ou demo), uma defasagem é sincroniza
 | PATCH | `/catalog/columns/{id}` | Edita uma coluna |
 | GET | `/catalog/datasources/{id}/relationships` | Lista os relacionamentos |
 | PATCH | `/catalog/relationships/{id}` | Liga, desliga ou descreve um relacionamento |
-| GET | `/catalog/datasources/{id}/context` | Texto em Markdown que o modelo receberá sobre a fonte |
+| GET | `/catalog/datasources/{id}/context` | Texto em Markdown que o modelo receberá sobre a fonte e os exemplos recusados |
 | GET | `/catalog/datasources/{id}/export` | Configuração atual em YAML |
 
 Na sincronização, 422 indica a variável de conexão não definida e 502 indica origem inacessível ou URL inválida. Nos dois casos o catálogo não muda, e as mensagens de erro nunca repetem a URL.

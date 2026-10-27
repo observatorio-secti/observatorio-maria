@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from observatorio_maria.catalog.context import render_context
+from observatorio_maria.catalog.context import check_examples, render_context
 from observatorio_maria.catalog.drift import check_datasource
 from observatorio_maria.catalog.introspection import (
     ConnectionNotConfiguredError,
@@ -15,6 +15,7 @@ from observatorio_maria.catalog.introspection import (
     get_introspector,
     resolve_connection_url,
 )
+from observatorio_maria.catalog.observed import refresh_observed_values
 from observatorio_maria.catalog.sync import (
     load_entities,
     load_relationships,
@@ -30,6 +31,7 @@ from observatorio_maria.models import (
     CatalogDataSource,
     CatalogEntity,
     CatalogRelationship,
+    ColumnAccess,
 )
 from observatorio_maria.schemas import (
     CheckResultPublic,
@@ -237,7 +239,9 @@ async def sync(
         raise HTTPException(
             status_code=HTTPStatus.BAD_GATEWAY, detail=str(exc)
         ) from exc
-    return await sync_datasource(session, datasource, snapshot)
+    report = await sync_datasource(session, datasource, snapshot)
+    await refresh_observed_values(session, datasource)
+    return report
 
 
 @router.post(
@@ -256,15 +260,18 @@ async def check(
     '/datasources/{datasource_id}/context', response_model=ContextPreview
 )
 async def preview_context(datasource: CurrentDataSource, session: Session):
+    entities = await load_entities(session, datasource.id)
     content = render_context(
         datasource,
-        await load_entities(session, datasource.id),
+        entities,
         await load_relationships(session, datasource.id),
     )
+    _, rejected = check_examples(datasource, entities)
     return ContextPreview(
         datasource_id=datasource.id,
         enabled=datasource.enabled,
         content=content,
+        rejected_examples=rejected,
     )
 
 
@@ -329,6 +336,9 @@ async def update_column(column_id: UUID, data: ColumnUpdate, session: Session):
         mode='json', exclude_unset=True
     ).items():
         setattr(column, field, value)
+    if column.access == ColumnAccess.AGGREGATE:
+        # Valores lidos dos dados não ficam guardados em coluna sensível.
+        column.observed_values = None
     await session.commit()
     return column
 

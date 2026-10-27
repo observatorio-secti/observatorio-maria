@@ -12,6 +12,12 @@ from observatorio_maria.models import (
     ColumnAccess,
     EntityKind,
 )
+from observatorio_maria.query.errors import QueryValidationError
+from observatorio_maria.query.validator import (
+    build_query_schema,
+    source_dialect,
+    validate_query,
+)
 
 KIND_LABELS = {
     EntityKind.TABLE: 'tabela',
@@ -28,13 +34,13 @@ def _value(item: dict) -> str:
 
 
 def _known_values(column: CatalogColumn) -> list[dict]:
-    """Valores que o modelo deve conhecer: os do enum da origem, na ordem
-    dela, com as descrições editoriais (obsoletos ficam de fora); sem enum,
-    os valores editoriais."""
-    if column.enum_values is None:
+    """Valores que o modelo deve conhecer: os da origem (enum ou observados
+    nos dados), na ordem dela, com as descrições editoriais (obsoletos ficam
+    de fora); sem valores da origem, os valores editoriais."""
+    if column.source_values is None:
         return column.values
     described = {str(item['value']): item for item in column.values}
-    return [described.get(v, {'value': v}) for v in column.enum_values]
+    return [described.get(v, {'value': v}) for v in column.source_values]
 
 
 def _column_line(column: CatalogColumn) -> str:
@@ -57,7 +63,10 @@ def _column_line(column: CatalogColumn) -> str:
         notes.append('aceita busca textual')
     values = _known_values(column)
     if values:
-        notes.append(f'Valores: {"; ".join(_value(v) for v in values)}')
+        label = 'Valores'
+        if column.enum_values is None and column.observed_values is not None:
+            label = 'Valores existentes na origem (use exatamente como estão)'
+        notes.append(f'{label}: {"; ".join(_value(v) for v in values)}')
     for note in notes:
         line = f'{line.rstrip(".")}. {note}'
     return line
@@ -96,6 +105,28 @@ def _examples_section(examples: list[dict] | None) -> list[str]:
                 lines.append(f'  {sql_line}')
             lines.append('  ```')
     return lines
+
+
+def check_examples(
+    datasource: CatalogDataSource, entities: list[CatalogEntity]
+) -> tuple[list[dict], list[dict]]:
+    """Separa os exemplos que passam nas regras de `query_data` dos
+    recusados, que voltam com pergunta e motivo."""
+    schema = build_query_schema(
+        datasource, entities, dialect=source_dialect(datasource)
+    )
+    accepted, rejected = [], []
+    for eg in datasource.examples or []:
+        try:
+            validate_query(eg.get('sql', ''), schema)
+        except QueryValidationError as exc:
+            rejected.append({
+                'question': eg.get('question', ''),
+                'reason': exc.message,
+            })
+        else:
+            accepted.append(eg)
+    return accepted, rejected
 
 
 def render_context(
@@ -139,6 +170,7 @@ def render_context(
     if links:
         lines += ['', '## Relacionamentos', *sorted(links)]
 
-    lines.extend(_examples_section(datasource.examples))
+    accepted, _ = check_examples(datasource, entities)
+    lines.extend(_examples_section(accepted))
 
     return '\n'.join(lines) + '\n'

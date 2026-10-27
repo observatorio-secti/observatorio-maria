@@ -496,3 +496,69 @@ async def test_query_runner_cost_exceeded_handled(
     assert res['calls_left'] == 2  # noqa: PLR2004
 
     await runner.close()
+
+
+@pytest.fixture
+async def projetos_runner(session, sqlite_source, monkeypatch):
+    monkeypatch.setenv('TEST_DB_URL', f'sqlite+aiosqlite:///{sqlite_source}')
+    ds = CatalogDataSource(
+        id='fonte1',
+        name='Fonte 1',
+        connection_env='TEST_DB_URL',
+        schemas=['main'],
+    )
+    session.add(ds)
+    ent = CatalogEntity(
+        datasource_id=ds.id,
+        schema_name='main',
+        name='projetos',
+        visible=True,
+        queryable=True,
+        present=True,
+    )
+    ent.columns = [
+        CatalogColumn(
+            entity_id=ent.id,
+            name=name,
+            visible=True,
+            present=True,
+            data_type=data_type,
+        )
+        for name, data_type in (
+            ('id', 'INTEGER'),
+            ('nome', 'TEXT'),
+            ('orcamento', 'REAL'),
+        )
+    ]
+    session.add(ent)
+    await session.commit()
+    return QueryRunner(session, ResultStore(), max_rows=10, calls_left=3)
+
+
+@pytest.mark.parametrize(
+    'sql',
+    [
+        "SELECT SUM(orcamento) FROM projetos WHERE nome = 'Dengue'",
+        "SELECT id FROM projetos WHERE nome = 'Dengue'",
+    ],
+)
+async def test_empty_or_null_result_has_hint(projetos_runner, sql):
+    res = await projetos_runner.query_data('fonte1', sql)
+
+    assert 'result_id' in res
+    assert 'SELECT DISTINCT' in res['hint']
+
+
+@pytest.mark.parametrize(
+    'sql',
+    [
+        "SELECT COUNT(*) FROM projetos WHERE nome = 'Dengue'",
+        "SELECT SUM(orcamento) FROM projetos WHERE nome = 'Projeto Dengue'",
+        'SELECT id, nome FROM projetos',
+    ],
+)
+async def test_result_with_data_has_no_hint(projetos_runner, sql):
+    res = await projetos_runner.query_data('fonte1', sql)
+
+    assert 'result_id' in res
+    assert 'hint' not in res

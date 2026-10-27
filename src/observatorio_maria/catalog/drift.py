@@ -21,6 +21,7 @@ from observatorio_maria.catalog.introspection import (
     SourceUnavailableError,
     resolve_connection_url,
 )
+from observatorio_maria.catalog.observed import refresh_observed_values
 from observatorio_maria.catalog.sync import (
     SyncReport,
     load_entities,
@@ -182,10 +183,13 @@ async def check_datasource(
         datasource.check_error = None
         datasource.last_checked_at = checked_at
         await session.commit()
+        # Os dados mudam sem mudar o schema: os valores são relidos sempre.
+        await refresh_observed_values(session, datasource)
         return CheckResult(SchemaStatus.UP_TO_DATE, checked_at)
 
     if datasource.auto_sync:
         report = await sync_datasource(session, datasource, snapshot)
+        await refresh_observed_values(session, datasource)
         logger.info(
             'Fonte %s sincronizada automaticamente: %s',
             datasource.id,

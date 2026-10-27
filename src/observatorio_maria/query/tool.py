@@ -28,8 +28,23 @@ from observatorio_maria.query.sanitization import (
 from observatorio_maria.query.validator import (
     QuerySchema,
     build_query_schema,
+    source_dialect,
     validate_query,
 )
+
+EMPTY_RESULT_HINT = (
+    'A consulta não trouxe dados (nenhuma linha ou só valores nulos). Se ela '
+    'filtra colunas de texto, confira os valores existentes (por exemplo, '
+    'SELECT DISTINCT coluna FROM entidade) antes de concluir que não há '
+    'dados, e refaça a consulta com os valores exatos.'
+)
+
+
+def is_empty_result(rows: list) -> bool:
+    """Zero linhas ou uma única linha só com nulos (ex.: SUM sem linhas)."""
+    if not rows:
+        return True
+    return len(rows) == 1 and all(value is None for value in rows[0])
 
 
 class QueryDataInput(BaseModel):
@@ -127,14 +142,9 @@ class QueryRunner:
     ) -> QuerySchema:
         if datasource.id not in self._schemas:
             entities = await load_entities(self.session, datasource.id)
-            backend = 'sqlite'
-            try:
-                url = resolve_connection_url(datasource.connection_env)
-                if 'postgres' in url or 'psycopg' in url:
-                    backend = 'postgres'
-            except ConnectionNotConfiguredError:
-                pass
-            schema = build_query_schema(datasource, entities, dialect=backend)
+            schema = build_query_schema(
+                datasource, entities, dialect=source_dialect(datasource)
+            )
             self._schemas[datasource.id] = schema
         return self._schemas[datasource.id]
 
@@ -205,7 +215,7 @@ class QueryRunner:
                 sanitized_rows,
                 truncated=result.truncated,
             )
-            return {
+            response = {
                 'result_id': result.result_id,
                 'columns': result.columns,
                 'rows': sanitized_rows,
@@ -213,6 +223,9 @@ class QueryRunner:
                 'truncated': result.truncated,
                 'calls_left': self.calls_left,
             }
+            if is_empty_result(rows):
+                response['hint'] = EMPTY_RESULT_HINT
+            return response
         except QueryValidationError as exc:
             return {
                 'error': exc.message,

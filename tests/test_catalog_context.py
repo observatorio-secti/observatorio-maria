@@ -1,6 +1,6 @@
 import pytest
 
-from observatorio_maria.catalog.context import render_context
+from observatorio_maria.catalog.context import check_examples, render_context
 from observatorio_maria.catalog.introspection import introspect
 from observatorio_maria.catalog.sync import (
     load_entities,
@@ -174,3 +174,91 @@ async def test_datasource_without_examples_omits_section(
 
     text = await context(session, datasource)
     assert '## Exemplos de consultas (few-shot)' not in text
+
+
+async def test_observed_values_replace_editorial_ones(
+    session, datasource, synced
+):
+    status = synced['bolsas'].columns[1]
+    status.values = [
+        {'value': 'Doutorado - Cotas', 'description': 'cotas de doutorado'},
+        {'value': 'Doutorado'},
+    ]
+    status.observed_values = ['Doutorado - Cotas', 'Mestrado - Cotas']
+    await session.commit()
+
+    text = await context(session, datasource)
+
+    assert (
+        'Valores existentes na origem (use exatamente como estão): '
+        '`Doutorado - Cotas` = cotas de doutorado; `Mestrado - Cotas`'
+    ) in text
+    assert '`Doutorado`' not in text
+
+
+async def test_without_source_values_editorial_values_stay(
+    session, datasource, synced
+):
+    status = synced['bolsas'].columns[1]
+    status.values = [{'value': 'REGULAR', 'description': 'válida'}]
+    await session.commit()
+
+    text = await context(session, datasource)
+
+    assert 'Valores: `REGULAR` = válida' in text
+    assert 'existentes na origem' not in text
+
+
+INVALID_EXAMPLE = {
+    'question': 'Total por ano',
+    'sql': 'SELECT ano, COUNT(*) FROM main.bolsas GROUP BY ano',
+}
+VALID_EXAMPLE = {
+    'question': 'Bolsas por status',
+    'sql': 'SELECT status, COUNT(*) FROM main.bolsas GROUP BY status',
+}
+
+
+async def test_example_with_unknown_column_is_rejected(
+    session, datasource, synced
+):
+    datasource.examples = [INVALID_EXAMPLE, VALID_EXAMPLE]
+    await session.commit()
+
+    text = await context(session, datasource)
+    _, rejected = check_examples(
+        datasource, await load_entities(session, datasource.id)
+    )
+
+    assert '- Pergunta: "Bolsas por status"' in text
+    assert 'Total por ano' not in text
+    assert len(rejected) == 1
+    assert rejected[0]['question'] == 'Total por ano'
+    assert 'ano' in rejected[0]['reason']
+
+
+async def test_valid_examples_are_all_kept(session, datasource, synced):
+    datasource.examples = [VALID_EXAMPLE]
+    await session.commit()
+
+    accepted, rejected = check_examples(
+        datasource, await load_entities(session, datasource.id)
+    )
+
+    assert accepted == [VALID_EXAMPLE]
+    assert rejected == []
+
+
+async def test_preview_lists_rejected_examples(
+    client, session, datasource, synced
+):
+    datasource.examples = [INVALID_EXAMPLE, VALID_EXAMPLE]
+    await session.commit()
+
+    data = (await client.get('/catalog/datasources/origem/context')).json()
+
+    assert [r['question'] for r in data['rejected_examples']] == [
+        'Total por ano'
+    ]
+    assert data['rejected_examples'][0]['reason']
+    assert 'Bolsas por status' in data['content']

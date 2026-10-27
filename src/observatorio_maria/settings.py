@@ -19,13 +19,15 @@ class Settings(BaseSettings):
     DEMO_ENABLED: bool = True
     # Intervalo da verificação de defasagem do catálogo; 0 desliga.
     CATALOG_CHECK_INTERVAL_SECONDS: float = 3600
+    # Máximo de valores distintos para uma coluna de texto ser categórica.
+    CATALOG_OBSERVED_VALUES_MAX: int = Field(50, ge=1)
 
     # Consultas a fontes do catálogo e orçamento do agente.
     QUERY_MAX_ROWS: int = Field(100, ge=1)
     QUERY_TIMEOUT_SECONDS: float = Field(15.0, gt=0)
     QUERY_MAX_PER_CALL: int = Field(4, ge=1)
     QUERY_MAX_ESTIMATED_COST: float = Field(50_000.0, ge=0.0)
-    MARIA_AGENT_MAX_MODEL_CALLS: int = Field(3, ge=1)
+    MARIA_AGENT_MAX_MODEL_CALLS: int = Field(6, ge=1)
 
     # Teto de tokens por conversa; 0 desliga a restrição.
     CONVERSATION_TOKEN_CEILING: int = Field(100_000, ge=0)

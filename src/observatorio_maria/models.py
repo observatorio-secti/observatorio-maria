@@ -216,6 +216,11 @@ class CatalogColumn:
     position: Mapped[int | None] = mapped_column(default=None)
     # Valores do tipo enum na origem (técnico); None se a coluna não é enum.
     enum_values: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    # Valores distintos lidos dos dados da origem (técnico); None se a coluna
+    # não é categórica ou não foi lida.
+    observed_values: Mapped[list[str] | None] = mapped_column(
+        JSON, default=None
+    )
     label: Mapped[str | None] = mapped_column(String(200), default=None)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     synonyms: Mapped[list[str]] = mapped_column(JSON, default_factory=list)
@@ -240,17 +245,25 @@ class CatalogColumn:
         }
 
     @property
+    def source_values(self) -> list[str] | None:
+        """Valores atuais da origem: os do enum ou, sem enum, os observados
+        nos dados. None quando a origem não informa valores."""
+        if self.enum_values is not None:
+            return self.enum_values
+        return self.observed_values
+
+    @property
     def undescribed_values(self) -> list[str]:
-        """Valores do enum na origem ainda sem descrição editorial."""
+        """Valores da origem ainda sem descrição editorial."""
         described = self._described()
-        return [v for v in self.enum_values or [] if v not in described]
+        return [v for v in self.source_values or [] if v not in described]
 
     @property
     def obsolete_values(self) -> list[str]:
-        """Valores descritos que não existem mais no enum da origem."""
-        if self.enum_values is None:
+        """Valores editoriais que não existem (mais) na origem."""
+        if self.source_values is None:
             return []
-        current = set(self.enum_values)
+        current = set(self.source_values)
         return [
             str(item['value'])
             for item in self.values

@@ -419,7 +419,12 @@ async def test_context_preview_disabled_datasource(client, synced):
 
     data = (await client.get('/catalog/datasources/origem/context')).json()
 
-    assert data == {'datasource_id': 'origem', 'enabled': False, 'content': ''}
+    assert data == {
+        'datasource_id': 'origem',
+        'enabled': False,
+        'content': '',
+        'rejected_examples': [],
+    }
 
 
 async def test_export_yaml(client, synced):
