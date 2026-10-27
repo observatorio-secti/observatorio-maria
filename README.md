@@ -65,6 +65,8 @@ catalog/            ← introspecção somente leitura → banco de origem (ex.:
 .
 ├── pyproject.toml / poetry.lock     # Dependências, Ruff, Pytest e Taskipy
 ├── alembic.ini · migrations/        # Migrações do banco (Alembic async)
+├── Dockerfile · compose.prod.yaml   # Imagem e deploy em produção
+├── docs/deploy.md                   # Guia de deploy ao lado do fomento
 ├── catalog/                         # Seeds YAML do catálogo (um arquivo por fonte)
 │   └── fomento.yaml
 ├── observability/                   # Stack local de observabilidade (Docker Compose)
@@ -156,6 +158,18 @@ docker compose -f observability/compose.yaml up -d
 ```
 
 Com a stack no ar e `OTEL_SDK_DISABLED=false`, a API passa a enviar telemetria automaticamente (veja [Observabilidade](#-observabilidade)).
+
+---
+
+## 🚢 Deploy em produção
+
+A Maria sobe em um projeto Docker Compose próprio (`compose.prod.yaml`), ao lado do observatório de fomento e sem alterar o compose dele. Tem banco Postgres próprio, só **lê** o banco do fomento pela rede Docker dele e expõe a API na porta `11309`.
+
+```bash
+docker compose -f compose.prod.yaml up -d --build
+```
+
+Antes de subir, crie o usuário somente leitura no banco do fomento e configure `FOMENTO_NETWORK`, `MARIA_POSTGRES_*` e `FOMENTO_DATABASE_URL`. O passo a passo completo, com operação e cuidados, está em [docs/deploy.md](docs/deploy.md).
 
 ---
 
