@@ -1,0 +1,508 @@
+# Seed do catálogo do banco de leitura do Simcc.
+#
+# É só o ponto de partida: o seed cria o que ainda não existe e nunca
+# sobrescreve o que foi editado depois pela API ou pela demo. Para recriar a
+# fonte a partir deste arquivo, descartando edições: task seed -- --reset
+#
+# Só as colunas listadas ficam visíveis. Arrays, JSON, tsvector, URLs e campos
+# internos do ETL (sequence_code, is_new, stars, has_image, relevance...)
+# entram ocultos na sincronização, assim como as demais tabelas do Simcc.
+# Os relacionamentos vêm das chaves estrangeiras da origem. Os valores das
+# colunas categóricas (type, qualis, nature...) são lidos dos dados.
+
+datasource:
+  id: simcc
+  name: Produção científica (Simcc)
+  description: >-
+    Currículo Lattes dos pesquisadores da Bahia no Simcc: artigos, livros,
+    capítulos, patentes, softwares, participação em eventos e projetos de
+    pesquisa.
+  connection_env: SIMCC_DATABASE_URL
+  schemas: [public]
+  instructions: |
+    - Banco PostgreSQL. Os identificadores (`id`, `canonical_id` e colunas `*_id`, exceto `lattes_id`) são UUIDs internos: use-os só em junções e nunca os mostre ao usuário.
+    - As tabelas base (`bibliographic_production`, `patent`, `software`, `participation_events`, `research_project` e as tabelas ligadas a elas) têm uma linha por pesquisador autor: um artigo de três coautores da plataforma aparece três vezes. Use-as para perguntas sobre um pesquisador ou uma lista de pesquisadores, partindo de `researcher`.
+    - Para totais de produções (por ano, Qualis, categoria, tipo de participação etc.), use as views `mv_canonical_*`, que têm uma linha por produção sem repetir coautores. Elas são atualizadas pelo Simcc e podem estar defasadas em relação às tabelas base.
+    - `bibliographic_production` guarda artigos, livros, capítulos e trabalhos em eventos; o tipo está em `type`, e os detalhes ficam em `bibliographic_production_article`, `bibliographic_production_book` e `bibliographic_production_book_chapter`, ligadas por `bibliographic_production_id`. O ano está em `year_` (número).
+    - `researcher_production` tem as contagens de produção de cada pesquisador, prontas para rankings.
+    - Ligação com o fomento: `researcher.lattes_id` é o mesmo identificador de `pesquisadores.lattes` na fonte `fomento`. Cada consulta acessa uma só fonte. Para relacionar as duas, consulte uma delas e filtre a outra com os Lattes obtidos (`lattes_id IN (...)`), no máximo 100 por consulta.
+    - Nem todo bolsista do fomento está no Simcc: ao relacionar as fontes, diga quantos dos Lattes consultados foram encontrados. Perguntas que exigem agregar mais de 100 pesquisadores das duas fontes ainda não podem ser respondidas; diga isso ao usuário.
+  examples:
+    - question: "Quantos artigos foram publicados por ano a partir de 2020?"
+      sql: >-
+        SELECT year, COUNT(*) AS artigos FROM public.mv_canonical_articles WHERE year >= 2020 GROUP BY year ORDER BY year
+    - question: "Quais artigos Qualis A1 tem o pesquisador de Lattes 1234567890123456?"
+      sql: >-
+        SELECT bp.title, bp.year_, a.periodical_magazine_name FROM public.researcher r JOIN public.bibliographic_production bp ON bp.researcher_id = r.id JOIN public.bibliographic_production_article a ON a.bibliographic_production_id = bp.id WHERE r.lattes_id = '1234567890123456' AND a.qualis = 'A1' ORDER BY bp.year_ DESC
+    - question: "Quantas patentes foram concedidas desde 2020?"
+      sql: >-
+        SELECT COUNT(*) FROM public.mv_canonical_patents WHERE grant_date >= '2020-01-01'
+    - question: "Projetos de pesquisa sobre dengue"
+      sql: >-
+        SELECT title, start_year, agency_name FROM public.mv_canonical_research_projects WHERE MATCH_TEXT(title, 'dengue', 'arbovirose') ORDER BY start_year DESC
+    - question: "Quais pesquisadores têm mais artigos?"
+      sql: >-
+        SELECT r.name, rp.articles FROM public.researcher_production rp JOIN public.researcher r ON r.id = rp.researcher_id ORDER BY rp.articles DESC LIMIT 10
+
+
+entities:
+  - name: researcher
+    label: Pesquisadores
+    description: Pesquisadores com currículo Lattes processado pelo Simcc.
+    synonyms: [pesquisador, pesquisadora, docente, autor, currículo]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: name
+        label: Nome
+        searchable: true
+      - name: lattes_id
+        label: Lattes
+        description: Identificador do currículo Lattes (CNPq); igual a pesquisadores.lattes no fomento.
+      - name: orcid
+        label: ORCID
+      - name: abstract
+        label: Resumo do currículo
+        searchable: true
+      - name: last_update
+        label: Atualização do Lattes
+        description: Data da última atualização do currículo Lattes.
+      - name: institution_id
+        description: Instituição do pesquisador.
+      - name: city_id
+        description: Cidade do pesquisador.
+
+  - name: institution
+    label: Instituições
+    synonyms: [instituição, universidade]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: name
+        label: Nome
+      - name: acronym
+        label: Sigla
+
+  - name: city
+    label: Cidades
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: name
+        label: Nome
+      - name: state_id
+        description: Estado da cidade.
+
+  - name: state
+    label: Estados
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: name
+        label: Nome
+      - name: abbreviation
+        label: Sigla
+
+  - name: researcher_production
+    label: Contagens de produção por pesquisador
+    description: Totais de produção de cada pesquisador, calculados pelo Simcc.
+    synonyms: [ranking, produtividade]
+    columns:
+      - name: researcher_id
+        description: Pesquisador.
+      - name: articles
+        label: Artigos
+      - name: book_chapters
+        label: Capítulos de livro
+      - name: book
+        label: Livros
+      - name: patent
+        label: Patentes
+      - name: software
+        label: Softwares
+      - name: work_in_event
+        label: Trabalhos em eventos
+
+  - name: bibliographic_production
+    label: Produções bibliográficas
+    description: >-
+      Artigos, livros, capítulos e trabalhos em eventos, com uma linha por
+      pesquisador autor.
+    synonyms: [produção, publicação, artigo, livro, capítulo]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: researcher_id
+        description: Pesquisador autor.
+      - name: type
+        label: Tipo
+      - name: title
+        label: Título
+        searchable: true
+      - name: year_
+        label: Ano
+      - name: doi
+        label: DOI
+      - name: language
+        label: Idioma
+      - name: nature
+        label: Natureza
+      - name: authors
+        label: Autores
+        description: Autores como aparecem no currículo, em texto.
+
+  - name: bibliographic_production_article
+    label: Detalhes de artigos
+    synonyms: [periódico, revista, qualis]
+    columns:
+      - name: bibliographic_production_id
+        description: Produção bibliográfica do artigo.
+      - name: periodical_magazine_name
+        label: Periódico
+      - name: issn
+        label: ISSN
+      - name: qualis
+        label: Qualis
+      - name: jcr
+        label: JCR
+
+  - name: bibliographic_production_book
+    label: Detalhes de livros
+    columns:
+      - name: bibliographic_production_id
+        description: Produção bibliográfica do livro.
+      - name: isbn
+        label: ISBN
+      - name: publishing_company
+        label: Editora
+      - name: publishing_company_city
+        label: Cidade da editora
+
+  - name: bibliographic_production_book_chapter
+    label: Detalhes de capítulos de livro
+    columns:
+      - name: bibliographic_production_id
+        description: Produção bibliográfica do capítulo.
+      - name: book_title
+        label: Título do livro
+      - name: isbn
+        label: ISBN
+      - name: organizers
+        label: Organizadores
+      - name: publishing_company
+        label: Editora
+
+  - name: patent
+    label: Patentes
+    description: Patentes com uma linha por pesquisador inventor.
+    synonyms: [patente, invenção, propriedade intelectual]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: researcher_id
+        description: Pesquisador inventor.
+      - name: title
+        label: Título
+        searchable: true
+      - name: category
+        label: Categoria
+      - name: code
+        label: Código
+      - name: development_year
+        label: Ano de desenvolvimento
+        description: Ano em texto, como veio do currículo.
+      - name: deposit_date
+        label: Data de depósito
+        description: Data em texto, como veio do currículo.
+      - name: grant_date
+        label: Data de concessão
+
+  - name: software
+    label: Softwares
+    description: Softwares com uma linha por pesquisador autor.
+    synonyms: [programa, sistema, aplicativo]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: researcher_id
+        description: Pesquisador autor.
+      - name: title
+        label: Título
+        searchable: true
+      - name: year
+        label: Ano
+      - name: platform
+        label: Plataforma
+      - name: goal
+        label: Finalidade
+      - name: environment
+        label: Ambiente
+      - name: availability
+        label: Disponibilidade
+      - name: financing_institutionc
+        label: Financiamento
+
+  - name: participation_events
+    label: Participação em eventos
+    description: Participações de pesquisadores em eventos, uma linha por pesquisador.
+    synonyms: [evento, congresso, seminário, simpósio]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: researcher_id
+        description: Pesquisador participante.
+      - name: title
+        label: Título
+        searchable: true
+      - name: event_name
+        label: Evento
+        searchable: true
+      - name: year
+        label: Ano
+      - name: nature
+        label: Natureza
+      - name: form_participation
+        label: Forma de participação
+      - name: type_participation
+        label: Tipo de participação
+
+  - name: research_project
+    label: Projetos de pesquisa
+    description: Projetos do currículo Lattes, com uma linha por pesquisador.
+    synonyms: [projeto, pesquisa]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: researcher_id
+        description: Pesquisador que declarou o projeto.
+      - name: project_name
+        label: Título
+        searchable: true
+      - name: description
+        label: Descrição
+        searchable: true
+      - name: start_year
+        label: Ano de início
+      - name: end_year
+        label: Ano de término
+      - name: status
+        label: Situação
+      - name: nature
+        label: Natureza
+      - name: agency_name
+        label: Financiador
+      - name: number_undergraduates
+        label: Alunos de graduação
+      - name: number_specialists
+        label: Especializandos
+      - name: number_academic_masters
+        label: Mestrandos
+      - name: number_phd
+        label: Doutorandos
+
+  - name: research_project_components
+    label: Integrantes de projetos
+    columns:
+      - name: project_id
+        description: Projeto de pesquisa.
+      - name: name
+        label: Nome
+      - name: lattes_id
+        label: Lattes
+      - name: coordinator
+        label: Coordenador
+
+  - name: research_project_foment
+    label: Financiamento de projetos
+    columns:
+      - name: project_id
+        description: Projeto de pesquisa.
+      - name: agency_name
+        label: Financiador
+      - name: agency_code
+        label: Código do financiador
+      - name: nature
+        label: Natureza
+
+  - name: research_project_production
+    label: Produções de projetos
+    columns:
+      - name: project_id
+        description: Projeto de pesquisa.
+      - name: title
+        label: Título
+      - name: type
+        label: Tipo
+
+  - name: mv_canonical_articles
+    label: Artigos (sem duplicatas)
+    description: >-
+      Uma linha por artigo, agrupando coautores da plataforma pelo DOI ou pelo
+      título. Para totais de artigos.
+    synonyms: [artigos únicos, total de artigos]
+    columns:
+      - name: canonical_id
+        description: Identificador interno.
+      - name: title
+        label: Título
+        searchable: true
+      - name: year
+        label: Ano
+      - name: doi
+        label: DOI
+      - name: qualis
+        label: Qualis
+      - name: jcr
+        label: JCR
+      - name: magazine_name
+        label: Periódico
+      - name: issn
+        label: ISSN
+      - name: abstract
+        label: Resumo
+        searchable: true
+      - name: keywords
+        label: Palavras-chave
+        searchable: true
+      - name: citations_count
+        label: Citações
+        description: Citações segundo o OpenAlex; zero quando não há dado.
+      - name: language
+        label: Idioma
+      - name: has_abstract
+        label: Tem resumo
+      - name: has_open_access_pdf
+        label: Tem PDF aberto
+
+  - name: mv_canonical_books
+    label: Livros (sem duplicatas)
+    description: Uma linha por livro, agrupando coautores pelo ISBN ou pelo título.
+    columns:
+      - name: canonical_id
+        description: Identificador interno.
+      - name: title
+        label: Título
+        searchable: true
+      - name: year
+        label: Ano
+      - name: doi
+        label: DOI
+      - name: isbn
+        label: ISBN
+      - name: publishing_company
+        label: Editora
+      - name: publishing_company_city
+        label: Cidade da editora
+
+  - name: mv_canonical_book_chapters
+    label: Capítulos de livro (sem duplicatas)
+    description: Uma linha por capítulo, agrupando coautores pelo ISBN ou pelos títulos.
+    columns:
+      - name: canonical_id
+        description: Identificador interno.
+      - name: title
+        label: Título
+        searchable: true
+      - name: year
+        label: Ano
+      - name: isbn
+        label: ISBN
+      - name: book_title
+        label: Título do livro
+      - name: publishing_company
+        label: Editora
+      - name: organizers
+        label: Organizadores
+
+  - name: mv_canonical_patents
+    label: Patentes (sem duplicatas)
+    description: Uma linha por patente, agrupando inventores pelo código ou pelo título.
+    columns:
+      - name: canonical_id
+        description: Identificador interno.
+      - name: title
+        label: Título
+        searchable: true
+      - name: year
+        label: Ano
+      - name: grant_date
+        label: Data de concessão
+      - name: deposit_date
+        label: Data de depósito
+        description: Data em texto, como veio do currículo.
+      - name: category
+        label: Categoria
+      - name: code
+        label: Código
+
+  - name: mv_canonical_software
+    label: Softwares (sem duplicatas)
+    description: Uma linha por software, agrupando autores pelo código ou pelo título e ano.
+    columns:
+      - name: canonical_id
+        description: Identificador interno.
+      - name: title
+        label: Título
+        searchable: true
+      - name: year
+        label: Ano
+      - name: platform
+        label: Plataforma
+      - name: environment
+        label: Ambiente
+      - name: availability
+        label: Disponibilidade
+      - name: financing
+        label: Financiamento
+
+  - name: mv_canonical_events
+    label: Participação em eventos (sem duplicatas)
+    description: Uma linha por participação, agrupando pesquisadores pelo título ou evento e ano.
+    columns:
+      - name: canonical_id
+        description: Identificador interno.
+      - name: title
+        label: Título
+        searchable: true
+      - name: event_name
+        label: Evento
+        searchable: true
+      - name: year
+        label: Ano
+      - name: nature
+        label: Natureza
+      - name: type_participation
+        label: Tipo de participação
+      - name: form_participation
+        label: Forma de participação
+
+  - name: mv_canonical_research_projects
+    label: Projetos de pesquisa (sem duplicatas)
+    description: Uma linha por projeto, agrupando pesquisadores pelo título e ano de início.
+    columns:
+      - name: canonical_id
+        description: Identificador interno.
+      - name: title
+        label: Título
+        searchable: true
+      - name: description
+        label: Descrição
+        searchable: true
+      - name: start_year
+        label: Ano de início
+      - name: end_year
+        label: Ano de término
+      - name: status
+        label: Situação
+      - name: nature
+        label: Natureza
+      - name: agency_name
+        label: Financiador
+      - name: number_undergraduates
+        label: Alunos de graduação
+      - name: number_specialists
+        label: Especializandos
+      - name: number_academic_masters
+        label: Mestrandos
+      - name: number_phd
+        label: Doutorandos

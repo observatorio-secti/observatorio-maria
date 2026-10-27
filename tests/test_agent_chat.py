@@ -220,6 +220,94 @@ async def test_system_prompt_contains_date_and_consultable_sources(
     assert expected_ctx.strip() in sys_msg.content
 
 
+async def setup_simcc(session, *, enabled: bool = True):
+    """Segunda fonte, com uma entidade consultável."""
+    ds = CatalogDataSource(
+        id='simcc',
+        name='Produção científica (Simcc)',
+        connection_env='TEST_SIMCC_URL',
+        schemas=['main'],
+        instructions='Use `researcher.lattes_id` para ligar ao fomento.',
+        enabled=enabled,
+    )
+    session.add(ds)
+    await session.flush()
+    ent = CatalogEntity(
+        datasource_id=ds.id,
+        schema_name='main',
+        name='researcher',
+        visible=True,
+        queryable=True,
+        present=True,
+    )
+    session.add(ent)
+    await session.flush()
+    session.add_all([
+        CatalogColumn(
+            entity_id=ent.id,
+            name=name,
+            visible=True,
+            present=True,
+            data_type='TEXT',
+        )
+        for name in ('name', 'lattes_id')
+    ])
+    await session.commit()
+    return ds
+
+
+async def source_context(session, ds):
+    return render_context(
+        ds,
+        await load_entities(session, ds.id),
+        await load_relationships(session, ds.id),
+    ).strip()
+
+
+async def first_system_prompt(client, conversation) -> str:
+    model = ScriptedToolChatModel(
+        responses=[AIMessage(content='Resposta teste.')]
+    )
+    set_test_model(model)
+    await client.post(
+        f'/conversations/{conversation["id"]}/messages',
+        json={'content': 'Quais pesquisadores existem?'},
+    )
+    return model.recorded_calls[0][0].content
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_contains_every_active_source(
+    client, session, conversation, fomento_source
+):
+    fomento = await setup_catalog(session, fomento_source)
+    simcc = await setup_simcc(session)
+    fomento_ctx = await source_context(session, fomento)
+    simcc_ctx = await source_context(session, simcc)
+
+    prompt = await first_system_prompt(client, conversation)
+
+    assert fomento_ctx in prompt
+    assert simcc_ctx in prompt
+    # Fontes na ordem do identificador.
+    assert prompt.index(fomento_ctx) < prompt.index(simcc_ctx)
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_skips_disabled_source(
+    client, session, conversation, fomento_source
+):
+    fomento = await setup_catalog(session, fomento_source)
+    await setup_simcc(session, enabled=False)
+    fomento_ctx = await source_context(session, fomento)
+
+    prompt = await first_system_prompt(client, conversation)
+
+    assert fomento_ctx in prompt
+    assert '(`simcc`)' not in prompt
+    assert 'researcher.lattes_id' not in prompt
+
+
 @pytest.mark.asyncio
 async def test_system_prompt_contains_few_shot_examples(
     client, session, conversation, fomento_source

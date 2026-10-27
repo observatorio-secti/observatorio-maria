@@ -66,9 +66,10 @@ catalog/            ← introspecção somente leitura → banco de origem (ex.:
 ├── pyproject.toml / poetry.lock     # Dependências, Ruff, Pytest e Taskipy
 ├── alembic.ini · migrations/        # Migrações do banco (Alembic async)
 ├── Dockerfile · compose.prod.yaml   # Imagem e deploy em produção
-├── docs/deploy.md                   # Guia de deploy ao lado do fomento
+├── docs/deploy.md                   # Guia de deploy ao lado do fomento e do Simcc
 ├── catalog/                         # Seeds YAML do catálogo (um arquivo por fonte)
-│   └── fomento.yaml
+│   ├── fomento.yaml
+│   └── simcc.yaml
 ├── observability/                   # Stack local de observabilidade (Docker Compose)
 │   ├── compose.yaml
 │   ├── otel-collector.yaml          # Roteamento: Tempo, Phoenix, Prometheus e Loki
@@ -135,7 +136,7 @@ Preencha ao menos o `OPENAI_API_KEY`. Sem a stack de observabilidade rodando, de
 alembic upgrade head
 ```
 
-Para carregar o catálogo do fomento, defina `FOMENTO_DATABASE_URL` e rode o seed (veja [Catálogo de dados](#-catálogo-de-dados)):
+Para carregar o catálogo das fontes, defina `FOMENTO_DATABASE_URL` e `SIMCC_DATABASE_URL` e rode o seed (veja [Catálogo de dados](#-catálogo-de-dados)):
 
 ```bash
 task seed
@@ -163,13 +164,13 @@ Com a stack no ar e `OTEL_SDK_DISABLED=false`, a API passa a enviar telemetria a
 
 ## 🚢 Deploy em produção
 
-A Maria sobe em um projeto Docker Compose próprio (`compose.prod.yaml`), ao lado do observatório de fomento e sem alterar o compose dele. Guarda conversas e catálogo num SQLite dentro de um volume Docker, sem servidor de banco próprio, só **lê** o banco do fomento pela rede Docker dele e expõe a API na porta `11309`.
+A Maria sobe em um projeto Docker Compose próprio (`compose.prod.yaml`), ao lado do observatório de fomento e do Simcc, sem alterar os composes deles. Guarda conversas e catálogo num SQLite dentro de um volume Docker, sem servidor de banco próprio, só **lê** o banco do fomento e o banco de leitura do Simcc pelas redes Docker deles e expõe a API na porta `11309`.
 
 ```bash
 docker compose -f compose.prod.yaml up -d --build
 ```
 
-Antes de subir, crie o usuário somente leitura no banco do fomento e configure `FOMENTO_NETWORK` e `FOMENTO_DATABASE_URL`. O passo a passo completo, com operação e cuidados, está em [docs/deploy.md](docs/deploy.md).
+Antes de subir, crie os usuários somente leitura nos bancos do fomento e do Simcc e configure `FOMENTO_NETWORK`, `FOMENTO_DATABASE_URL` e `SIMCC_DATABASE_URL` (e `SIMCC_NETWORK`, se a rede do Simcc não for `simcc-network`). O passo a passo completo, com operação e cuidados, está em [docs/deploy.md](docs/deploy.md).
 
 ---
 
@@ -198,6 +199,7 @@ As variáveis são lidas do ambiente e do `.env`.
 | `MARIA_AGENT_MAX_MODEL_CALLS` | Orçamento máximo de chamadas ao modelo por resposta da Maria | `6` |
 | `CONVERSATION_TOKEN_CEILING` | Teto de tokens acumulados por conversa. `0` desliga | `100000` |
 | `FOMENTO_DATABASE_URL` | URL do banco do fomento, com driver assíncrono (`postgresql+psycopg://…`). O nome da variável é definido por fonte no catálogo | — |
+| `SIMCC_DATABASE_URL` | URL do banco de leitura do Simcc (`postgresql+psycopg://…/simcc`), usada pela fonte `simcc` | — |
 
 ---
 
@@ -283,13 +285,25 @@ Se o cliente fechar a conexão no meio, a geração é interrompida e nada é gr
 O catálogo descreve os bancos de outros sistemas que a Maria vai consultar. Ele fica no banco da própria Maria, e os bancos de origem **nunca são alterados**: a sincronização abre uma conexão somente leitura e só lê o schema.
 
 ```text
-catalog/fomento.yaml ──task seed──────────┐
+catalog/fomento.yaml ┐
+catalog/simcc.yaml   ┴─task seed─────────┐
                                           ▼
-banco do fomento ──sincronizar──▶  catálogo (banco da Maria)  ◀── API / demo
+bancos de origem ──sincronizar──▶  catálogo (banco da Maria)  ◀── API / demo
                    (só leitura)           │
                                           ▼
                                  prévia do contexto do modelo
 ```
+
+Há duas fontes:
+
+| Fonte | Banco | Conteúdo |
+|---|---|---|
+| `fomento` | Banco do módulo de fomento (`FOMENTO_DATABASE_URL`) | Bolsas, projetos, bolsistas, instituições, áreas e territórios |
+| `simcc` | Banco de leitura do Simcc (`SIMCC_DATABASE_URL`) | Currículo Lattes: artigos, livros, capítulos, patentes, softwares, participação em eventos e projetos de pesquisa |
+
+**Simcc.** As tabelas base do Simcc têm uma linha por pesquisador autor e servem para perguntas sobre pesquisadores. As views `mv_canonical_*` têm uma linha por produção, sem repetir coautores, e servem para totais. As instruções da fonte explicam isso ao modelo. Arrays, JSON, `tsvector` e campos internos do ETL do Simcc ficam ocultos. Nome, ORCID e resumo do currículo têm acesso `full`, por decisão do projeto: a Maria pode citar pesquisadores, inclusive ao relacionar com bolsistas do fomento. Para mudar isso, passe as colunas para `aggregate` ou oculte-as pela API ou pela demo.
+
+**Fomento × Simcc.** `pesquisadores.lattes` (fomento) e `researcher.lattes_id` (Simcc) são o mesmo identificador, mas cada consulta acessa uma só fonte. As instruções orientam o modelo a consultar uma fonte e filtrar a outra com até 100 Lattes por vez (o teto de linhas de `QUERY_MAX_ROWS`), informando quantos foram encontrados. Agregações sobre grupos maiores ainda não são possíveis. Se `QUERY_MAX_ROWS` mudar, ajuste o número nas instruções do `catalog/simcc.yaml` ou pela API.
 
 | Nível | Configuração |
 |---|---|

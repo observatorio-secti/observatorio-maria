@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from observatorio_maria.catalog.context import check_examples, render_context
@@ -7,7 +9,8 @@ from observatorio_maria.catalog.sync import (
     load_relationships,
     sync_datasource,
 )
-from observatorio_maria.models import ColumnAccess
+from observatorio_maria.catalog.yaml_io import load_catalog_file, seed_catalog
+from observatorio_maria.models import CatalogDataSource, ColumnAccess
 
 
 @pytest.fixture
@@ -262,3 +265,41 @@ async def test_preview_lists_rejected_examples(
     ]
     assert data['rejected_examples'][0]['reason']
     assert 'Bolsas por status' in data['content']
+
+
+async def seeded_context(session, path):
+    """Prévia gerada a partir de um seed, com tudo o que ele declara
+    presente."""
+    document = load_catalog_file(Path(path))
+    await seed_catalog(session, document)
+    datasource = await session.get(CatalogDataSource, document.datasource.id)
+    entities = await load_entities(session, datasource.id)
+    for entity in entities:
+        entity.present = True
+        for column in entity.columns:
+            column.present = True
+    await session.commit()
+    return render_context(
+        datasource, entities, await load_relationships(session, datasource.id)
+    )
+
+
+async def test_simcc_instructions_in_context(session):
+    text = await seeded_context(session, 'catalog/simcc.yaml')
+
+    # Tabelas base x views canônicas, e o ano numérico.
+    assert 'mv_canonical_*' in text
+    assert 'para totais de produções' in text.lower()
+    assert '`year_`' in text
+    # Ligação com o fomento e cobertura.
+    assert '`researcher.lattes_id`' in text
+    assert '`pesquisadores.lattes`' in text
+    assert 'no máximo 100 por consulta' in text
+    assert 'quantos dos Lattes consultados foram encontrados' in text
+
+
+async def test_fomento_instructions_point_to_simcc(session):
+    text = await seeded_context(session, 'catalog/fomento.yaml')
+
+    assert 'estão na fonte `simcc`' in text
+    assert '`pesquisadores.lattes` = `researcher.lattes_id`' in text

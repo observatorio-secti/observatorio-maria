@@ -25,6 +25,7 @@ datasource:
     - Áreas do conhecimento formam uma árvore (grande área > área > subárea); um projeto pode apontar para qualquer nível.
     - Alguns campos podem não estar preenchidos na origem, como nome, cidade e território do pesquisador e a subárea. Se uma consulta por eles vier vazia ou só com nulos, confira com COUNT(coluna) e diga ao usuário que o dado não está disponível na base, sem inventar.
     - O identificador Lattes em `pesquisadores.lattes` indica se o pesquisador está identificado no Simcc. Quando `lattes` for nulo, o pesquisador não está presente no Simcc. Ao responder sobre presença no Simcc ou dados relacionados (como artigos), considere essa distinção.
+    - Artigos, livros, capítulos, patentes, softwares, participação em eventos e projetos do currículo dos pesquisadores estão na fonte `simcc`, ligada a esta pelo Lattes (`pesquisadores.lattes` = `researcher.lattes_id`). Siga as instruções daquela fonte para relacionar as duas.
   examples:
     - question: "Quantas bolsas estavam ativas em 1º de janeiro de 2025?"
       sql: >-
