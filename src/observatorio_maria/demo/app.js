@@ -343,14 +343,16 @@ async function sendMessage(event) {
     partial?.remove();
     const hint =
       error.status === 429
-        ? ' Crie uma nova conversa pelo botão "+ Nova conversa" para continuar.'
+        ? ' Use o botão "+ Nova conversa".'
         : error.status === 503
           ? ' Configure OPENAI_API_KEY no .env e reinicie a API.'
           : error.status === 'stream'
             ? ' Nada foi gravado na conversa; tente novamente.'
             : '';
     const status = typeof error.status === 'number' ? ` ${error.status}` : '';
-    showBanner(`Erro${status}: ${error.message}.${hint}`);
+    // A mensagem da API pode já terminar em ponto (limites da conversa).
+    const message = error.message.replace(/[.\s]+$/, '');
+    showBanner(`Erro${status}: ${message}.${hint}`);
   } finally {
     typing.remove();
     state.sending = false;

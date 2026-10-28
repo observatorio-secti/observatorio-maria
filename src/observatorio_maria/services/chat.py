@@ -20,7 +20,7 @@ from openinference.instrumentation import OITracer, using_session
 from openinference.semconv.trace import SpanAttributes
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from observatorio_maria.catalog.context import render_context
@@ -70,6 +70,10 @@ class ModelInvocationError(Exception):
 
 class ConversationTokenLimitExceededError(Exception):
     """O teto de tokens da conversa foi atingido."""
+
+
+class ConversationQuestionLimitExceededError(Exception):
+    """O limite de perguntas da conversa foi atingido."""
 
 
 class _TokenUsageTracker(BaseCallbackHandler):
@@ -278,8 +282,27 @@ class ChatService:
         self.settings = settings or Settings()
         self.agent_metrics = agent_metrics or get_agent_metrics()
 
-    def check_token_ceiling(self, conversation: Conversation) -> None:
-        """Verifica se a conversa atingiu o teto de tokens permitido."""
+    async def check_conversation_limits(
+        self, conversation: Conversation
+    ) -> None:
+        """Recusa a pergunta se a conversa atingiu o limite de perguntas ou
+        o teto de tokens (quando ligado)."""
+        max_questions = self.settings.CONVERSATION_MAX_QUESTIONS
+        if max_questions > 0:
+            questions = await self.session.scalar(
+                select(func.count())
+                .select_from(Message)
+                .where(
+                    Message.conversation_id == conversation.id,
+                    Message.role == MessageRole.USER,
+                )
+            )
+            if questions >= max_questions:
+                noun = 'pergunta' if max_questions == 1 else 'perguntas'
+                raise ConversationQuestionLimitExceededError(
+                    f'Limite de {max_questions} {noun} da conversa '
+                    'atingido. Inicie uma nova conversa para continuar.'
+                )
         if (
             self.settings.CONVERSATION_TOKEN_CEILING > 0
             and (conversation.total_tokens or 0)
@@ -299,7 +322,7 @@ class ChatService:
         (ModelInvocationError) ou interrupção pelo consumidor não deixam
         registros parciais.
         """
-        self.check_token_ceiling(conversation)
+        await self.check_conversation_limits(conversation)
         registered = self.registry.get(CHAT_MODEL_TIER)
         (
             consultable_sources,

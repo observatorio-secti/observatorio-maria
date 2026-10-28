@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from observatorio_maria.app import app
@@ -18,6 +19,7 @@ from observatorio_maria.llm.registry import (
 )
 from observatorio_maria.models import Conversation, Message, MessageRole
 from observatorio_maria.services.chat import CHAT_MODEL_TIER
+from observatorio_maria.settings import Settings
 from tests.conftest import FailingChatModel, UsageReportingFakeChatModel
 
 
@@ -202,8 +204,9 @@ async def test_send_message_accumulates_tokens(client, conversation):
 
 
 async def test_send_message_rejects_when_token_ceiling_reached(
-    client, conversation, session
+    client, conversation, session, monkeypatch
 ):
+    monkeypatch.setenv('CONVERSATION_TOKEN_CEILING', '100000')
     db_conv = await session.get(Conversation, UUID(conversation['id']))
     db_conv.total_tokens = 100_000
     await session.commit()
@@ -216,3 +219,121 @@ async def test_send_message_rejects_when_token_ceiling_reached(
 
     history = (await client.get(messages_url(conversation))).json()['messages']
     assert len(history) == 0
+
+
+def use_failing_model():
+    """Qualquer chamada ao modelo falharia: prova que a recusa vem antes."""
+    registry = ModelRegistry([
+        RegisteredModel(tier, f'fake:{tier}', FailingChatModel())
+        for tier in ModelTier
+    ])
+    app.dependency_overrides[get_model_registry] = lambda: registry
+
+
+async def add_questions(session, conversation, count):
+    """Grava `count` pares de pergunta e resposta na conversa."""
+    conversation_id = UUID(conversation['id'])
+    for index in range(count):
+        session.add_all([
+            Message(
+                conversation_id=conversation_id,
+                role=MessageRole.USER,
+                content=[{'type': 'text', 'text': f'Pergunta {index}'}],
+            ),
+            Message(
+                conversation_id=conversation_id,
+                role=MessageRole.ASSISTANT,
+                content=[{'type': 'text', 'text': 'Resposta'}],
+            ),
+        ])
+    await session.commit()
+
+
+async def count_questions(session, conversation):
+    rows = await session.scalars(
+        select(Message).where(
+            Message.conversation_id == UUID(conversation['id']),
+            Message.role == MessageRole.USER,
+        )
+    )
+    return len(rows.all())
+
+
+async def test_send_message_rejects_when_question_limit_reached(
+    client, conversation, session, monkeypatch
+):
+    monkeypatch.delenv('CONVERSATION_MAX_QUESTIONS', raising=False)
+    await add_questions(session, conversation, 10)
+    use_failing_model()
+
+    response = await client.post(
+        messages_url(conversation), json={'content': 'Mais uma pergunta'}
+    )
+
+    assert response.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert 'Limite de 10 perguntas' in response.json()['detail']
+    assert 'nova conversa' in response.json()['detail']
+    assert await count_questions(session, conversation) == 10  # noqa: PLR2004
+
+
+async def test_send_message_allows_last_question_before_limit(
+    client, conversation, session, monkeypatch
+):
+    monkeypatch.delenv('CONVERSATION_MAX_QUESTIONS', raising=False)
+    await add_questions(session, conversation, 9)
+
+    response = await client.post(
+        messages_url(conversation), json={'content': 'Décima pergunta'}
+    )
+
+    assert response.status_code == HTTPStatus.CREATED
+    assert await count_questions(session, conversation) == 10  # noqa: PLR2004
+
+
+async def test_send_message_respects_configured_question_limit(
+    client, conversation, session, monkeypatch
+):
+    monkeypatch.setenv('CONVERSATION_MAX_QUESTIONS', '3')
+    await add_questions(session, conversation, 3)
+
+    response = await client.post(
+        messages_url(conversation), json={'content': 'Quarta pergunta'}
+    )
+
+    assert response.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert 'Limite de 3 perguntas' in response.json()['detail']
+
+
+async def test_send_message_question_limit_disabled(
+    client, conversation, session, monkeypatch
+):
+    monkeypatch.setenv('CONVERSATION_MAX_QUESTIONS', '0')
+    await add_questions(session, conversation, 50)
+
+    response = await client.post(
+        messages_url(conversation), json={'content': 'Pergunta 51'}
+    )
+
+    assert response.status_code == HTTPStatus.CREATED
+
+
+async def test_token_ceiling_disabled_by_default(
+    client, conversation, session, monkeypatch
+):
+    monkeypatch.delenv('CONVERSATION_TOKEN_CEILING', raising=False)
+    monkeypatch.delenv('CONVERSATION_MAX_QUESTIONS', raising=False)
+    await add_questions(session, conversation, 2)
+    db_conv = await session.get(Conversation, UUID(conversation['id']))
+    db_conv.total_tokens = 500_000
+    await session.commit()
+
+    response = await client.post(
+        messages_url(conversation), json={'content': 'Terceira pergunta'}
+    )
+
+    assert response.status_code == HTTPStatus.CREATED
+
+
+def test_negative_question_limit_is_rejected():
+    with pytest.raises(ValidationError):
+        Settings(CONVERSATION_MAX_QUESTIONS=-1)

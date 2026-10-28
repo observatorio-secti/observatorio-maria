@@ -30,6 +30,7 @@ from observatorio_maria.services.chat import (
     ChatEvent,
     ChatService,
     ContentDelta,
+    ConversationQuestionLimitExceededError,
     ConversationTokenLimitExceededError,
     ModelInvocationError,
     UserMessageCreated,
@@ -56,12 +57,15 @@ async def get_conversation(conversation_id: UUID, session: Session):
 CurrentConversation = Annotated[Conversation, Depends(get_conversation)]
 
 
-def check_conversation_token_ceiling(
+async def check_conversation_limits(
     conversation: CurrentConversation, chat: Chat
 ) -> Conversation:
     try:
-        chat.check_token_ceiling(conversation)
-    except ConversationTokenLimitExceededError as exc:
+        await chat.check_conversation_limits(conversation)
+    except (
+        ConversationQuestionLimitExceededError,
+        ConversationTokenLimitExceededError,
+    ) as exc:
         raise HTTPException(
             status_code=HTTPStatus.TOO_MANY_REQUESTS,
             detail=str(exc),
@@ -70,7 +74,7 @@ def check_conversation_token_ceiling(
 
 
 ActiveConversation = Annotated[
-    Conversation, Depends(check_conversation_token_ceiling)
+    Conversation, Depends(check_conversation_limits)
 ]
 
 

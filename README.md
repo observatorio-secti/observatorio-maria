@@ -16,7 +16,7 @@ API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa cient�
 | **Observabilidade** | Traces, métricas e logs via OpenTelemetry. O caminho de cada resposta da IA fica visível no Arize Phoenix. Stack local com Grafana, Tempo, Loki e Prometheus. |
 | **Catálogo de dados** | Descreve bancos externos para a IA: o que o modelo **enxerga**, como interpreta cada tabela e coluna e o que pode **consultar**. Seed via YAML, sincronização somente leitura com o schema real, exportação e prévia do contexto. Primeira fonte: o banco do módulo de fomento. |
 | **Defasagem do schema** | Verificação periódica (e sob demanda) se a origem mudou desde a última sincronização, com o diff do que mudou, sincronização automática opcional e leitura dos valores de enum, apontando os que ainda não têm descrição. |
-| **Segurança e Privacidade** | Quarentena semântica contra prompt injection indireto (`<untrusted_database_data>`), mascaramento preventivo de PII (CPF e e-mail via LGPD), limites de consulta (timeout, teto de linhas, consultas por chamada) e teto de tokens por conversa. |
+| **Segurança e Privacidade** | Quarentena semântica contra prompt injection indireto (`<untrusted_database_data>`), mascaramento preventivo de PII (CPF e e-mail via LGPD), limites de consulta (timeout, teto de linhas, consultas por chamada), limite de perguntas por conversa e teto opcional de tokens. |
 | **Demo** | Página em `/demo/` para conversar com a Maria, visualizar o contrato de blocos e configurar o catálogo de dados. |
 
 ---
@@ -197,7 +197,8 @@ As variáveis são lidas do ambiente e do `.env`.
 | `QUERY_MAX_PER_CALL` | Máximo de consultas SQL executadas por chamada do modelo | `4` |
 | `QUERY_MAX_ESTIMATED_COST` | Custo estimado máximo de consulta via EXPLAIN no PostgreSQL (0 desliga) | `50000` |
 | `MARIA_AGENT_MAX_MODEL_CALLS` | Orçamento máximo de chamadas ao modelo por resposta da Maria | `6` |
-| `CONVERSATION_TOKEN_CEILING` | Teto de tokens acumulados por conversa. `0` desliga | `100000` |
+| `CONVERSATION_MAX_QUESTIONS` | Perguntas por conversa. Na seguinte, a API responde 429 e orienta a iniciar uma nova conversa. `0` desliga | `10` |
+| `CONVERSATION_TOKEN_CEILING` | Teto opcional de tokens acumulados por conversa, como trava de custo. `0` desliga | `0` |
 | `FOMENTO_DATABASE_URL` | URL do banco do fomento, com driver assíncrono (`postgresql+psycopg://…`). O nome da variável é definido por fonte no catálogo | — |
 | `SIMCC_DATABASE_URL` | URL do banco de leitura do Simcc (`postgresql+psycopg://…/simcc`), usada pela fonte `simcc` | — |
 
@@ -389,7 +390,8 @@ A Maria implementa múltiplas camadas de proteção para salvaguardar dados de c
    - **Dry-run com EXPLAIN:** Antes da execução no PostgreSQL, um dry-run via `EXPLAIN (FORMAT JSON)` inspeciona o custo estimado (`Total Cost`). Se ultrapassar `QUERY_MAX_ESTIMATED_COST`, a consulta é barrada preventivamente sem tocar nos dados, devolvendo mensagem orientativa para a Maria refinar os filtros.
    - **Truncamento defensivo por célula:** Textos de células longas são limitados a 2.000 caracteres, prevenindo esgotamento intencional da janela de contexto (*Context Flooding*).
    - **Limites de execução:** Teto máximo de linhas por consulta (`QUERY_MAX_ROWS`), timeout de banco (`QUERY_TIMEOUT_SECONDS`), máximo de consultas SQL por chamada (`QUERY_MAX_PER_CALL`) e orçamento de chamadas ao modelo (`MARIA_AGENT_MAX_MODEL_CALLS`).
-   - **Teto de tokens por conversa:** A conversa é bloqueada ao atingir `CONVERSATION_TOKEN_CEILING`, protegendo custos e prevenindo loops ou conversas excessivamente longas.
+   - **Limite de perguntas por conversa:** Depois de `CONVERSATION_MAX_QUESTIONS` perguntas (padrão 10), a conversa recusa novas mensagens com HTTP 429 e orienta a iniciar outra. O limite não depende do tamanho do contexto das fontes, que com fomento e Simcc leva cada resposta a gastar de 27 a 50 mil tokens.
+   - **Teto de tokens por conversa (opcional):** Com `CONVERSATION_TOKEN_CEILING` maior que zero, a conversa também é bloqueada ao atingir esse total de tokens, como trava de custo. Vem desligado por padrão; `total_tokens` continua sendo contado em toda conversa.
 
 ---
 

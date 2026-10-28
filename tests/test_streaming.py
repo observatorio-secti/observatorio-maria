@@ -14,7 +14,7 @@ from observatorio_maria.llm.registry import (
     RegisteredModel,
     get_model_registry,
 )
-from observatorio_maria.models import Conversation, Message
+from observatorio_maria.models import Conversation, Message, MessageRole
 from observatorio_maria.observability.genai import get_tracer
 from observatorio_maria.services.chat import ChatService, ContentDelta
 from tests.conftest import (
@@ -162,8 +162,9 @@ async def test_stream_is_traced_and_measured(
 
 
 async def test_stream_rejects_when_token_ceiling_reached(
-    client, conversation, session
+    client, conversation, session, monkeypatch
 ):
+    monkeypatch.setenv('CONVERSATION_TOKEN_CEILING', '100000')
     db_conv = await session.get(Conversation, UUID(conversation['id']))
     db_conv.total_tokens = 100_000
     await session.commit()
@@ -182,3 +183,31 @@ async def test_stream_accumulates_tokens(client, conversation):
 
     conv_res = await client.get(f'/conversations/{conversation["id"]}')
     assert conv_res.json()['total_tokens'] == 17  # noqa: PLR2004
+
+
+async def test_stream_rejects_when_question_limit_reached(
+    client, conversation, session, monkeypatch
+):
+    monkeypatch.setenv('CONVERSATION_MAX_QUESTIONS', '1')
+    session.add_all([
+        Message(
+            conversation_id=UUID(conversation['id']),
+            role=MessageRole.USER,
+            content=[{'type': 'text', 'text': 'Primeira pergunta'}],
+        ),
+        Message(
+            conversation_id=UUID(conversation['id']),
+            role=MessageRole.ASSISTANT,
+            content=[{'type': 'text', 'text': 'Resposta'}],
+        ),
+    ])
+    await session.commit()
+    use_model(FailingChatModel())
+
+    response = await client.post(
+        stream_url(conversation), json={'content': 'Segunda pergunta'}
+    )
+
+    assert response.status_code == HTTPStatus.TOO_MANY_REQUESTS
+    assert 'Limite de 1 pergunta da conversa' in response.json()['detail']
+    assert 'text/event-stream' not in response.headers['content-type']
