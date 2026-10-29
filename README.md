@@ -296,8 +296,9 @@ Se o cliente fechar a conexão no meio, a geração é interrompida e nada é gr
 O catálogo descreve os bancos de outros sistemas que a Maria vai consultar. Ele fica no banco da própria Maria, e os bancos de origem **nunca são alterados**: a sincronização abre uma conexão somente leitura e só lê o schema.
 
 ```text
-catalog/fomento.yaml ┐
-catalog/simcc.yaml   ┴─task seed─────────┐
+catalog/fomento.yaml  ┐
+catalog/simcc.yaml    │
+catalog/concepts.yaml ┴─task seed────────┐
                                           ▼
 bancos de origem ──sincronizar──▶  catálogo (banco da Maria)  ◀── API / demo
                    (só leitura)           │
@@ -312,9 +313,11 @@ Há duas fontes:
 | `fomento` | Banco do módulo de fomento (`FOMENTO_DATABASE_URL`) | Bolsas, projetos, bolsistas, instituições, áreas e territórios |
 | `simcc` | Banco de leitura do Simcc (`SIMCC_DATABASE_URL`) | Currículo Lattes: artigos, livros, capítulos, patentes, softwares, participação em eventos e projetos de pesquisa |
 
-**Simcc.** As tabelas base do Simcc têm uma linha por pesquisador autor e servem para perguntas sobre pesquisadores. As views `mv_canonical_*` têm uma linha por produção, sem repetir coautores, e servem para totais. As instruções da fonte explicam isso ao modelo. Arrays, JSON, `tsvector` e campos internos do ETL do Simcc ficam ocultos. Nome, ORCID e resumo do currículo têm acesso `full`, por decisão do projeto: a Maria pode citar pesquisadores, inclusive ao relacionar com bolsistas do fomento. Para mudar isso, passe as colunas para `aggregate` ou oculte-as pela API ou pela demo.
+**Simcc.** As tabelas base do Simcc têm uma linha por pesquisador autor e servem para perguntas sobre pesquisadores. As views `mv_canonical_*` têm uma linha por produção, sem repetir coautores, e servem para totais. As instruções da fonte explicam isso ao modelo. Arrays, JSON, `tsvector` e campos internos do ETL do Simcc ficam ocultos. Nome, ORCID e resumo do currículo têm acesso `full`, por decisão do projeto: a Maria pode citar pesquisadores, inclusive ao relacionar com bolsistas do fomento. Para mudar isso, passe as colunas para `aggregate` ou oculte-as pela API ou pela demo. Um pesquisador pode ter várias instituições, ligadas por `researcher_institution`; o antigo `researcher.institution_id` fica fora do contexto, e as instruções orientam `COUNT(DISTINCT ...)` ao contar pesquisadores por instituição.
 
 **Fomento × Simcc.** `pesquisadores.lattes` (fomento) e `researcher.lattes_id` (Simcc) são o mesmo identificador, mas cada consulta acessa uma só fonte. As instruções orientam o modelo a consultar uma fonte e filtrar a outra com até 100 Lattes por vez (o teto de linhas de `QUERY_MAX_ROWS`), informando quantos foram encontrados. Agregações sobre grupos maiores ainda não são possíveis. Se `QUERY_MAX_ROWS` mudar, ajuste o número nas instruções do `catalog/simcc.yaml` ou pela API.
+
+**Conceitos em várias fontes.** O mesmo nome aparece nas duas fontes com significados diferentes: projetos com bolsa (fomento) e projetos do currículo Lattes (Simcc); instituições das bolsas e afiliações dos pesquisadores; bolsistas e pesquisadores com currículo. Um **conceito** reúne as entidades de cada fonte e guarda a **política de resposta**: o que o conceito é em cada fonte, qual responde pelo sentido da pergunta e, sem sentido definido, qual é a padrão, dizendo a origem do número e mencionando a outra fonte numa frase, nunca somando as duas. O prompt recebe a seção "Conceitos em várias fontes" antes das fontes, só com conceitos que têm entidades visíveis em pelo menos duas fontes incluídas, e cada entidade vinculada indica o conceito no contexto da sua fonte. Conceitos são dado editorial: a sincronização nunca os altera, e excluir um conceito só desvincula as entidades. `catalog/concepts.yaml` traz `projetos`, `instituicoes` e `pesquisadores`, com as entidades no formato `fonte:schema.entidade`.
 
 | Nível | Configuração |
 |---|---|
@@ -322,6 +325,7 @@ Há duas fontes:
 | **Entidade** (tabela, view ou view materializada) | Rótulo, descrição, sinônimos, **visível** (o modelo enxerga) e **consultável** (o modelo pode consultar). Consultável exige visível |
 | **Coluna** | Rótulo, descrição, sinônimos, valores conhecidos com significado, **visível**, **pesquisável** (habilita busca textual via `MATCH_TEXT`) e **acesso**: `full` (pode ler valores) ou `aggregate` (só filtrar, agrupar e contar; para dados pessoais) |
 | **Relacionamento** | Liga/desliga e descrição. Vêm das chaves estrangeiras ou, quando não há chave (views), do YAML |
+| **Conceito** | Identificador (slug, imutável), rótulo, descrição, sinônimos e política de resposta. Cada entidade aponta para no máximo um conceito |
 
 **Dados técnicos e editoriais.** A sincronização só atualiza tipo, chaves, ordem e presença. Rótulos, descrições e interruptores vêm de pessoas e nunca são sobrescritos. O que é novo na origem entra **oculto**; o que sumiu fica **ausente**, com a configuração guardada, e volta se reaparecer.
 
@@ -330,6 +334,8 @@ Há duas fontes:
 ```bash
 task seed -- --reset
 ```
+
+O arquivo de conceitos é aplicado depois das fontes: cria só os conceitos que faltam e vincula só entidades sem conceito, avisando sobre entidades que não estão no catálogo. Com `--reset`, ele recria os conceitos do arquivo e seus vínculos. Recriar uma fonte com `--reset` apaga as entidades e, com elas, os vínculos; inclua `catalog/concepts.yaml` no mesmo seed (o `task seed` já inclui) para vinculá-las de novo.
 
 No YAML, entidades e colunas listadas ficam visíveis (e as entidades, consultáveis) por padrão. O que não é listado entra oculto na sincronização. `GET /catalog/datasources/{id}/export` devolve a configuração atual no mesmo formato, pronta para versionar.
 
@@ -359,12 +365,17 @@ Com `auto_sync` ligado na fonte (API, YAML ou demo), uma defasagem é sincroniza
 | POST | `/catalog/datasources/{id}/sync` | Sincroniza com o schema da origem e devolve o resumo |
 | POST | `/catalog/datasources/{id}/check` | Verifica a defasagem sem alterar o catálogo (ou sincroniza, com `auto_sync`) |
 | GET | `/catalog/datasources/{id}/entities` | Lista as entidades |
-| GET · PATCH | `/catalog/entities/{id}` | Detalha (com colunas) ou edita uma entidade |
+| GET · PATCH | `/catalog/entities/{id}` | Detalha (com colunas) ou edita uma entidade, inclusive o conceito (`concept_id`; 422 se não existir) |
 | PATCH | `/catalog/columns/{id}` | Edita uma coluna |
 | GET | `/catalog/datasources/{id}/relationships` | Lista os relacionamentos |
 | PATCH | `/catalog/relationships/{id}` | Liga, desliga ou descreve um relacionamento |
 | GET | `/catalog/datasources/{id}/context` | Texto em Markdown que o modelo receberá sobre a fonte e os exemplos recusados |
 | GET | `/catalog/datasources/{id}/export` | Configuração atual em YAML |
+| GET | `/catalog/concepts` | Lista os conceitos com as entidades vinculadas |
+| POST | `/catalog/concepts` | Cria um conceito (`id` em slug; 409 se já existir) |
+| GET · PATCH · DELETE | `/catalog/concepts/{id}` | Detalha, edita ou exclui um conceito (as entidades ficam sem conceito) |
+| GET | `/catalog/concepts/context` | Seção "Conceitos em várias fontes" que o modelo receberá |
+| GET | `/catalog/concepts/export` | Conceitos e vínculos em YAML, no formato do seed |
 
 Na sincronização, 422 indica a variável de conexão não definida e 502 indica origem inacessível ou URL inválida. Nos dois casos o catálogo não muda, e as mensagens de erro nunca repetem a URL.
 

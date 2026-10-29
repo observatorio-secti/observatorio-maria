@@ -33,9 +33,9 @@ datasource:
     - question: "Total de bolsas por ano a partir de 2020"
       sql: >-
         SELECT ano_inicio, SUM(quantidade) AS total FROM public.mv_bolsas_metricas WHERE ano_inicio >= 2020 GROUP BY ano_inicio ORDER BY ano_inicio
-    - question: "Projetos de pesquisa sobre dengue"
+    - question: "Projetos com bolsa sobre mandioca"
       sql: >-
-        SELECT id, nome FROM public.projetos WHERE MATCH_TEXT(resumo, 'dengue', 'arbovirose')
+        SELECT nome FROM public.projetos WHERE MATCH_TEXT(resumo, 'mandioca')
     - question: "Quantos pesquisadores têm currículo Lattes identificado?"
       sql: >-
         SELECT COUNT(*) FROM public.pesquisadores WHERE lattes IS NOT NULL

@@ -33,8 +33,8 @@ TOOL_RULES_PROMPT = (
     'filtros claros (como ano, status ou termos com MATCH_TEXT) para '
     'evitar varreduras amplas que excedam o limite de custo do banco.\n'
     '- Para buscas textuais em campos pesquisáveis, use a função '
-    "MATCH_TEXT(coluna, 'termo1', 'termo2', ...) (ex.: "
-    "MATCH_TEXT(p.resumo, 'dengue', 'arbovirose')). Nunca use MATCH_TEXT "
+    "MATCH_TEXT(coluna, 'termo1', 'termo2', ...), com os termos da "
+    'pergunta do usuário. Nunca use MATCH_TEXT '
     'como operador infixo nem operadores como %.\n'
     '- Em filtros por colunas de texto, use os valores exatamente como '
     'listados no catálogo. Se uma consulta filtrada voltar vazia ou nula '
@@ -58,8 +58,10 @@ TOOL_RULES_PROMPT = (
 def build_system_prompt(
     current_date: date | None = None,
     source_contexts: list[str] | None = None,
+    concepts_context: str | None = None,
 ) -> str:
-    """Monta o prompt de sistema com instruções, regras, data e fontes."""
+    """Monta o prompt de sistema com instruções, regras, data, conceitos
+    repetidos entre fontes e fontes."""
     sections = [MARIA_SYSTEM_PROMPT.strip(), TOOL_RULES_PROMPT.strip()]
 
     if current_date is None:
@@ -69,6 +71,8 @@ def build_system_prompt(
         f'(fuso horário America/Bahia).'
     )
 
+    if source_contexts and concepts_context and concepts_context.strip():
+        sections.append(concepts_context.strip())
     if source_contexts:
         sections.append('Fontes de dados disponíveis para consulta:')
         sections.extend(

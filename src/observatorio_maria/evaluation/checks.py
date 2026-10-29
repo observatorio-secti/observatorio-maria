@@ -78,9 +78,16 @@ def extract_numbers(texts: list[str]) -> set[Decimal]:
     return numbers
 
 
+# Travessões e hifens tipográficos viram hífen simples.
+DASHES = str.maketrans(
+    dict.fromkeys('\u2010\u2011\u2012\u2013\u2014\u2212', '-')
+)
+
+
 def normalize_text(text: str) -> str:
-    """Minúsculas, sem acentos e com espaços colapsados."""
-    decomposed = unicodedata.normalize('NFKD', text)
+    """Minúsculas, sem acentos, com um só tipo de hífen e espaços
+    colapsados."""
+    decomposed = unicodedata.normalize('NFKD', text.translate(DASHES))
     stripped = ''.join(c for c in decomposed if not unicodedata.combining(c))
     return ' '.join(stripped.lower().split())
 

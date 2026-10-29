@@ -1,0 +1,58 @@
+# Seed dos conceitos que aparecem em mais de uma fonte.
+#
+# Cada conceito reúne as entidades das fontes (`fonte:schema.entidade`) e
+# guarda a política de resposta: o que o conceito é em cada fonte e qual
+# delas usar. Como os outros seeds, só cria o que falta e nunca sobrescreve o
+# que foi editado pela API ou pela demo. É aplicado depois das fontes.
+#
+# Decisões na issue #2: responder pela fonte do sentido da pergunta; sem
+# sentido definido, usar a fonte padrão, dizer a origem do número e mencionar
+# a outra numa frase. Nunca somar as fontes.
+
+concepts:
+  - id: projetos
+    label: Projetos
+    description: >-
+      Projetos de pesquisa. No fomento, projetos que receberam bolsa; no
+      Simcc, projetos declarados no currículo Lattes dos pesquisadores.
+    synonyms: [projeto, projeto de pesquisa]
+    instructions: |
+      - Fomento: projetos vinculados a bolsas concedidas. Use para perguntas sobre financiamento, bolsa, edital ou fomento.
+      - Simcc: projetos de pesquisa declarados no currículo Lattes. Use para perguntas sobre currículo, Lattes ou produção dos pesquisadores.
+      - Pergunta genérica, como "quantos projetos sobre X existem?": responda pelo fomento, diga que o número é de projetos com bolsa do fomento e mencione numa frase que o Simcc tem os projetos do currículo Lattes, que podem ser consultados à parte.
+      - Nunca some projetos das duas fontes: são registros diferentes, sem correspondência entre si.
+    entities:
+      - fomento:public.projetos
+      - simcc:public.research_project
+      - simcc:public.mv_canonical_research_projects
+
+  - id: instituicoes
+    label: Instituições
+    description: >-
+      Instituições de pesquisa e ensino. No fomento, as instituições das
+      bolsas; no Simcc, as instituições de afiliação dos pesquisadores.
+    synonyms: [instituição, universidade]
+    instructions: |
+      - Fomento: instituições às quais as bolsas estão vinculadas. Use para perguntas sobre bolsas e bolsistas.
+      - Simcc: instituições de afiliação dos pesquisadores com currículo (`researcher_institution`). Use para perguntas sobre produção e pesquisadores.
+      - Pergunta genérica, como "quantas instituições há?": responda pelo fomento, diga que são as instituições das bolsas e mencione numa frase que o Simcc tem as instituições de afiliação dos pesquisadores.
+      - Não há correspondência entre as instituições das duas fontes: nunca some as listas nem cruze instituições por nome ou sigla.
+    entities:
+      - fomento:public.instituicoes
+      - simcc:public.institution
+
+  - id: pesquisadores
+    label: Pesquisadores
+    description: >-
+      Pessoas que fazem pesquisa. No fomento, os bolsistas (sem nome, com o
+      Lattes quando identificado); no Simcc, os pesquisadores com currículo
+      Lattes (nome, ORCID e resumo).
+    synonyms: [pesquisador, bolsista, docente]
+    instructions: |
+      - Fomento: bolsistas, isto é, pessoas que receberam bolsa. Use para perguntas sobre bolsistas e bolsas.
+      - Simcc: pesquisadores com currículo Lattes na plataforma. Use para nomes, ORCID, currículo e produção.
+      - Pergunta genérica, como "quantos pesquisadores existem?": responda pelo fomento, diga que o número é de bolsistas do fomento e mencione numa frase quantos pesquisadores com currículo há no Simcc ou que esse número pode ser consultado.
+      - A única ligação entre as fontes é o Lattes (`pesquisadores.lattes` = `researcher.lattes_id`). Nunca some as contagens das duas fontes.
+    entities:
+      - fomento:public.pesquisadores
+      - simcc:public.researcher

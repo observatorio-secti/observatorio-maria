@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from observatorio_maria.catalog.context import check_examples, render_context
+from observatorio_maria.catalog.context import (
+    check_examples,
+    render_concepts,
+    render_context,
+)
 from observatorio_maria.catalog.introspection import introspect
 from observatorio_maria.catalog.sync import (
     load_entities,
@@ -10,7 +14,12 @@ from observatorio_maria.catalog.sync import (
     sync_datasource,
 )
 from observatorio_maria.catalog.yaml_io import load_catalog_file, seed_catalog
-from observatorio_maria.models import CatalogDataSource, ColumnAccess
+from observatorio_maria.models import (
+    CatalogConcept,
+    CatalogDataSource,
+    CatalogEntity,
+    ColumnAccess,
+)
 
 
 @pytest.fixture
@@ -303,3 +312,92 @@ async def test_fomento_instructions_point_to_simcc(session):
 
     assert 'estão na fonte `simcc`' in text
     assert '`pesquisadores.lattes` = `researcher.lattes_id`' in text
+
+
+# --- Conceitos em várias fontes ----------------------------------------------
+
+
+def concept_entity(datasource_id, name, concept_id='projetos', **overrides):
+    data = {
+        'datasource_id': datasource_id,
+        'schema_name': 'public',
+        'name': name,
+        'concept_id': concept_id,
+        'visible': True,
+        'queryable': True,
+        'present': True,
+    }
+    return CatalogEntity(**{**data, **overrides})
+
+
+def two_sources():
+    return [
+        CatalogDataSource(id='fomento', name='Fomento', connection_env='A'),
+        CatalogDataSource(id='simcc', name='Simcc', connection_env='B'),
+    ]
+
+
+PROJETOS = CatalogConcept(
+    id='projetos',
+    label='Projetos',
+    description='Projetos de pesquisa.',
+    instructions='- Pergunta genérica: use o fomento e mencione o Simcc.',
+)
+
+
+def test_concept_in_two_sources_is_listed():
+    entities = [
+        concept_entity('fomento', 'projetos', label='Projetos com bolsa'),
+        concept_entity('simcc', 'research_project'),
+        concept_entity('simcc', 'mv_canonical_research_projects'),
+    ]
+
+    text = render_concepts([PROJETOS], entities, two_sources())
+
+    assert text.startswith('# Conceitos em várias fontes')
+    assert '## Projetos (`projetos`)' in text
+    assert '- Fomento (`fomento`): `public.projetos` (Projetos com bolsa)' in (
+        text
+    )
+    assert (
+        '- Simcc (`simcc`): `public.mv_canonical_research_projects`, '
+        '`public.research_project`'
+    ) in text
+    assert 'use o fomento e mencione o Simcc' in text
+
+
+def test_concept_in_one_source_is_left_out():
+    entities = [
+        concept_entity('fomento', 'projetos'),
+        concept_entity('simcc', 'research_project'),
+    ]
+    only_fomento = two_sources()[:1]
+
+    assert not render_concepts([PROJETOS], entities, only_fomento)
+
+
+def test_hidden_entity_does_not_count_as_source():
+    entities = [
+        concept_entity('fomento', 'projetos'),
+        concept_entity('simcc', 'research_project', visible=False),
+    ]
+
+    assert not render_concepts([PROJETOS], entities, two_sources())
+
+
+async def test_entity_section_shows_concept(session, datasource, synced):
+    synced['bolsas'].concept_id = 'projetos'
+    session.add(CatalogConcept(id='projetos', label='Projetos'))
+    await session.commit()
+
+    text = render_context(
+        datasource,
+        await load_entities(session, datasource.id),
+        await load_relationships(session, datasource.id),
+        {'projetos': 'Projetos'},
+    )
+
+    bolsas = text.split('### `main.bolsas`')[1].split('###')[0]
+    assert 'Conceito: Projetos' in bolsas
+    pesquisadores = text.split('### `main.pesquisadores`')[1]
+    assert 'Conceito:' not in pesquisadores

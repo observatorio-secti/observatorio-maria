@@ -1,6 +1,9 @@
 """Carrega arquivos YAML no catálogo.
 
 Uso: python -m observatorio_maria.catalog.seed ARQUIVO... [--reset]
+
+Cada arquivo é de uma fonte (`datasource:`) ou de conceitos (`concepts:`).
+Os conceitos são aplicados depois das fontes, para as entidades já existirem.
 """
 
 import argparse
@@ -9,18 +12,23 @@ import sys
 from pathlib import Path
 
 from observatorio_maria.catalog.yaml_io import (
+    CatalogFile,
     CatalogFileError,
-    load_catalog_file,
+    ConceptsFile,
+    load_seed_file,
     seed_catalog,
+    seed_concepts,
 )
 from observatorio_maria.database import SessionLocal
 
 
 async def run(paths: list[Path], *, reset: bool) -> None:
     # Valida todos os arquivos antes de gravar qualquer um.
-    documents = [load_catalog_file(path) for path in paths]
+    documents = [(path, load_seed_file(path)) for path in paths]
+    sources = [(p, d) for p, d in documents if isinstance(d, CatalogFile)]
+    concepts = [(p, d) for p, d in documents if isinstance(d, ConceptsFile)]
     async with SessionLocal() as session:
-        for path, document in zip(paths, documents, strict=True):
+        for path, document in sources:
             report = await seed_catalog(session, document, reset=reset)
             status = 'criada' if report.datasource_created else 'existente'
             print(
@@ -28,6 +36,17 @@ async def run(paths: list[Path], *, reset: bool) -> None:
                 f'{report.entities} entidade(s), {report.columns} coluna(s) '
                 f'e {report.relationships} relacionamento(s) criados'
             )
+        for path, document in concepts:
+            report = await seed_concepts(session, document, reset=reset)
+            print(
+                f'{path}: {report.created} conceito(s) criado(s) e '
+                f'{report.linked} entidade(s) vinculada(s)'
+            )
+            for ref in report.missing:
+                print(
+                    f'{path}: aviso: entidade {ref} não está no catálogo',
+                    file=sys.stderr,
+                )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,7 +55,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         '--reset',
         action='store_true',
-        help='recria cada fonte a partir do arquivo, descartando edições',
+        help=(
+            'recria cada fonte e os conceitos a partir dos arquivos, '
+            'descartando edições'
+        ),
     )
     args = parser.parse_args(argv)
     try:

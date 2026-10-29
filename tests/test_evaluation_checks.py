@@ -103,6 +103,14 @@ def test_list_ignores_case_accents_and_spaces():
     assert result.status == 'passed'
 
 
+def test_list_ignores_typographic_dashes():
+    check = ListCheck(type='list', items=['Covid-19 Outcomes - A Study'])
+
+    result = check_list(check, ['COVID‑19 Outcomes – A Study'])
+
+    assert result.status == 'passed'
+
+
 def observation(source, error=None):
     return QueryObservation(
         source=source, sql='SELECT 1', row_count=1, error=error

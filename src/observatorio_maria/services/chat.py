@@ -23,7 +23,11 @@ from opentelemetry.trace import Status, StatusCode
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from observatorio_maria.catalog.context import render_context
+from observatorio_maria.catalog.context import (
+    load_concept_labels,
+    load_concepts_context,
+    render_context,
+)
 from observatorio_maria.catalog.sync import (
     load_entities,
     load_relationships,
@@ -188,6 +192,7 @@ async def get_consultable_sources_and_contexts(
     )
     consultable_ds = []
     contexts = []
+    concept_labels = await load_concept_labels(session)
     for ds in datasources:
         entities = await load_entities(session, ds.id)
         has_queryable = any(
@@ -196,7 +201,9 @@ async def get_consultable_sources_and_contexts(
         if has_queryable:
             consultable_ds.append(ds)
             relationships = await load_relationships(session, ds.id)
-            contexts.append(render_context(ds, entities, relationships))
+            contexts.append(
+                render_context(ds, entities, relationships, concept_labels)
+            )
     return consultable_ds, contexts
 
 
@@ -336,8 +343,14 @@ class ChatService:
             self.settings.MARIA_AGENT_MAX_MODEL_CALLS if has_sources else 1
         )
 
+        concepts_context = (
+            await load_concepts_context(self.session, consultable_sources)
+            if has_sources
+            else None
+        )
         system_prompt = build_system_prompt(
-            source_contexts=contexts if has_sources else None
+            source_contexts=contexts if has_sources else None,
+            concepts_context=concepts_context,
         )
         history = await get_history(self.session, conversation)
 

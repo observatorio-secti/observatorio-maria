@@ -4,8 +4,12 @@
 não enxerga. Itens ocultos ou ausentes nunca entram.
 """
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from observatorio_maria.models import (
     CatalogColumn,
+    CatalogConcept,
     CatalogDataSource,
     CatalogEntity,
     CatalogRelationship,
@@ -72,7 +76,9 @@ def _column_line(column: CatalogColumn) -> str:
     return line
 
 
-def _entity_section(entity: CatalogEntity) -> list[str]:
+def _entity_section(
+    entity: CatalogEntity, concept_label: str | None = None
+) -> list[str]:
     kind = KIND_LABELS.get(entity.kind, entity.kind or 'entidade')
     title = f'### `{entity.qualified_name}` ({kind})'
     if entity.label:
@@ -82,6 +88,10 @@ def _entity_section(entity: CatalogEntity) -> list[str]:
         lines.append(entity.description)
     if entity.synonyms:
         lines.append(f'Sinônimos: {", ".join(entity.synonyms)}.')
+    if concept_label:
+        lines.append(
+            f'Conceito: {concept_label} (veja "Conceitos em várias fontes").'
+        )
     if not entity.queryable:
         lines.append('_Somente referência: não pode ser consultada._')
     columns = [c for c in entity.columns if c.visible and c.present]
@@ -133,6 +143,7 @@ def render_context(
     datasource: CatalogDataSource,
     entities: list[CatalogEntity],
     relationships: list[CatalogRelationship],
+    concept_labels: dict[str, str] | None = None,
 ) -> str:
     if not datasource.enabled:
         return ''
@@ -152,7 +163,8 @@ def render_context(
     if not included:
         lines.append('Nenhuma entidade disponível.')
     for entity in included:
-        lines += ['', *_entity_section(entity)]
+        label = (concept_labels or {}).get(entity.concept_id)
+        lines += ['', *_entity_section(entity, label)]
 
     links = []
     for r in relationships:
@@ -174,3 +186,86 @@ def render_context(
     lines.extend(_examples_section(accepted))
 
     return '\n'.join(lines) + '\n'
+
+
+CONCEPTS_INTRO = (
+    'Estes assuntos aparecem em mais de uma fonte, com significados '
+    'diferentes. Siga a política de cada um para escolher a fonte e diga ao '
+    'usuário de qual fonte vem cada número.'
+)
+
+
+def render_concepts(
+    concepts: list[CatalogConcept],
+    entities: list[CatalogEntity],
+    datasources: list[CatalogDataSource],
+) -> str:
+    """Seção "Conceitos em várias fontes"; vazia se nenhum conceito tem
+    entidades visíveis e presentes em duas ou mais das fontes dadas."""
+    names = {ds.id: ds.name for ds in datasources}
+    sections = []
+    for concept in sorted(concepts, key=lambda c: c.label):
+        own = sorted(
+            (
+                e
+                for e in entities
+                if e.concept_id == concept.id
+                and e.visible
+                and e.present
+                and e.datasource_id in names
+            ),
+            key=lambda e: (e.datasource_id, e.schema_name, e.name),
+        )
+        sources = sorted({e.datasource_id for e in own})
+        if len(sources) < 2:  # noqa: PLR2004
+            continue
+        lines = ['', f'## {concept.label} (`{concept.id}`)']
+        if concept.description:
+            lines.append(concept.description.strip())
+        if concept.synonyms:
+            lines.append(f'Sinônimos: {", ".join(concept.synonyms)}.')
+        lines.append('Entidades:')
+        for source in sources:
+            refs = ', '.join(
+                f'`{e.qualified_name}`' + (f' ({e.label})' if e.label else '')
+                for e in own
+                if e.datasource_id == source
+            )
+            lines.append(f'- {names[source]} (`{source}`): {refs}')
+        if concept.instructions:
+            lines += ['Política:', concept.instructions.strip()]
+        sections += lines
+    if not sections:
+        return ''
+    return (
+        '\n'.join([
+            '# Conceitos em várias fontes',
+            '',
+            CONCEPTS_INTRO,
+            *sections,
+        ])
+        + '\n'
+    )
+
+
+async def load_concept_labels(session: AsyncSession) -> dict[str, str]:
+    concepts = await session.scalars(select(CatalogConcept))
+    return {c.id: c.label for c in concepts}
+
+
+async def load_concepts_context(
+    session: AsyncSession, datasources: list[CatalogDataSource]
+) -> str:
+    """Seção de conceitos para as fontes incluídas no prompt."""
+    concepts = list(await session.scalars(select(CatalogConcept)))
+    if not concepts:
+        return ''
+    entities = list(
+        await session.scalars(
+            select(CatalogEntity).where(
+                CatalogEntity.concept_id.is_not(None),
+                CatalogEntity.datasource_id.in_([d.id for d in datasources]),
+            )
+        )
+    )
+    return render_concepts(concepts, entities, datasources)

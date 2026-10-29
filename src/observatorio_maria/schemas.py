@@ -327,6 +327,7 @@ class EntitySummary(BaseModel):
     label: str | None
     description: str | None
     synonyms: list[str]
+    concept_id: str | None = None
     visible: bool
     queryable: bool
     present: bool
@@ -348,8 +349,62 @@ class EntityUpdate(BaseModel):
     label: Label | None = None
     description: str | None = None
     synonyms: Synonyms = None
+    concept_id: Slug | None = None
     visible: bool = None
     queryable: bool = None
+
+
+class ConceptCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    id: Slug
+    label: Label
+    description: str | None = None
+    synonyms: Synonyms = Field(default_factory=list)
+    instructions: str | None = None
+
+
+class ConceptUpdate(BaseModel):
+    """O identificador do conceito é imutável."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    label: Label = None
+    description: str | None = None
+    synonyms: Synonyms = None
+    instructions: str | None = None
+
+
+class ConceptEntity(BaseModel):
+    id: UUID
+    datasource_id: str
+    schema_name: str
+    name: str
+    label: str | None
+
+
+class ConceptPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    label: str
+    description: str | None
+    synonyms: list[str]
+    instructions: str | None
+    entities: list[ConceptEntity] = Field(default_factory=list)
+
+
+class ConceptList(BaseModel):
+    concepts: list[ConceptPublic]
+
+
+class ConceptContextPreview(BaseModel):
+    content: str = Field(
+        description=(
+            'Seção "Conceitos em várias fontes" do prompt, em Markdown; '
+            'vazia quando nenhum conceito tem entidades em duas fontes.'
+        )
+    )
 
 
 class RelationshipPublic(BaseModel):

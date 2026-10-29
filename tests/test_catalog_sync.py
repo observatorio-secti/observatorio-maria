@@ -1,7 +1,7 @@
 import sqlite3
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 
 from observatorio_maria.catalog.introspection import (
@@ -14,7 +14,12 @@ from observatorio_maria.catalog.sync import (
     load_relationships,
     sync_datasource,
 )
-from observatorio_maria.models import EntityKind, RelationshipOrigin
+from observatorio_maria.models import (
+    CatalogConcept,
+    CatalogEntity,
+    EntityKind,
+    RelationshipOrigin,
+)
 
 
 async def sync(session, datasource, url):
@@ -192,3 +197,38 @@ async def test_removed_column_becomes_missing(
     ]
     lattes = next(c for c in pesquisadores.columns if c.name == 'lattes')
     assert not lattes.present
+
+
+async def test_resync_preserves_entity_concept(session, datasource, url):
+    await sync(session, datasource, url)
+    session.add(CatalogConcept(id='bolsas', label='Bolsas'))
+    bolsas = by_name(await load_entities(session, datasource.id))['bolsas']
+    bolsas.concept_id = 'bolsas'
+    await session.commit()
+
+    await sync(session, datasource, url)
+
+    bolsas = by_name(await load_entities(session, datasource.id))['bolsas']
+    assert bolsas.concept_id == 'bolsas'
+    concept = await session.get(CatalogConcept, 'bolsas')
+    assert concept.label == 'Bolsas'
+
+
+async def test_deleting_concept_unlinks_entities(session, datasource, url):
+    await sync(session, datasource, url)
+    session.add(CatalogConcept(id='bolsas', label='Bolsas'))
+    entities = by_name(await load_entities(session, datasource.id))
+    entities['bolsas'].concept_id = 'bolsas'
+    entities['bolsas_por_status'].concept_id = 'bolsas'
+    await session.commit()
+
+    await session.delete(await session.get(CatalogConcept, 'bolsas'))
+    await session.commit()
+
+    concepts = await session.scalars(
+        select(CatalogEntity.concept_id).where(
+            CatalogEntity.datasource_id == datasource.id
+        )
+    )
+    assert set(concepts) == {None}
+    assert len(await load_entities(session, datasource.id)) == 4  # noqa: PLR2004

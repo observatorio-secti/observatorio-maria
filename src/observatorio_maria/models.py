@@ -163,6 +163,26 @@ class CatalogDataSource:
 
 
 @table_registry.mapped_as_dataclass(kw_only=True)
+class CatalogConcept:
+    """Assunto que aparece em mais de uma fonte (dado editorial)."""
+
+    __tablename__ = 'catalog_concepts'
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    synonyms: Mapped[list[str]] = mapped_column(JSON, default_factory=list)
+    # Política de resposta: o que o conceito é em cada fonte e qual usar.
+    instructions: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, init=False, default_factory=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime, init=False, default_factory=utcnow, onupdate=utcnow
+    )
+
+
+@table_registry.mapped_as_dataclass(kw_only=True)
 class CatalogEntity:
     __tablename__ = 'catalog_entities'
     __table_args__ = (
@@ -182,6 +202,13 @@ class CatalogEntity:
     label: Mapped[str | None] = mapped_column(String(200), default=None)
     description: Mapped[str | None] = mapped_column(Text, default=None)
     synonyms: Mapped[list[str]] = mapped_column(JSON, default_factory=list)
+    # Conceito editorial ao qual a entidade pertence; a sincronização não o
+    # altera.
+    concept_id: Mapped[str | None] = mapped_column(
+        ForeignKey('catalog_concepts.id', ondelete='SET NULL'),
+        default=None,
+        index=True,
+    )
     visible: Mapped[bool] = mapped_column(default=False)
     queryable: Mapped[bool] = mapped_column(default=False)
     present: Mapped[bool] = mapped_column(default=False)

@@ -249,6 +249,12 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .columns-table tr.is-missing td { opacity: 0.55; }
 .columns-table .key { color: var(--accent); font-size: 0.75rem; margin-left: 4px; }
 .context-preview { white-space: pre-wrap; max-height: 70vh; }
+.concept-list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }
+.concept-list li { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; }
+.concept-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.concept-head .actions { margin-left: auto; display: flex; gap: 6px; }
+.concept-entities { display: flex; flex-wrap: wrap; gap: 4px; }
+.concept-entities .badge { white-space: normal; overflow-wrap: anywhere; }
 
 @media (max-width: 860px) {
   .catalog-layout { grid-template-columns: minmax(0, 1fr); }

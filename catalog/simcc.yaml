@@ -24,6 +24,7 @@ datasource:
     - As tabelas base (`bibliographic_production`, `patent`, `software`, `participation_events`, `research_project` e as tabelas ligadas a elas) têm uma linha por pesquisador autor: um artigo de três coautores da plataforma aparece três vezes. Use-as para perguntas sobre um pesquisador ou uma lista de pesquisadores, partindo de `researcher`.
     - Para totais de produções (por ano, Qualis, categoria, tipo de participação etc.), use as views `mv_canonical_*`, que têm uma linha por produção sem repetir coautores. Elas são atualizadas pelo Simcc e podem estar defasadas em relação às tabelas base.
     - `bibliographic_production` guarda artigos, livros, capítulos e trabalhos em eventos; o tipo está em `type`, e os detalhes ficam em `bibliographic_production_article`, `bibliographic_production_book` e `bibliographic_production_book_chapter`, ligadas por `bibliographic_production_id`. O ano está em `year_` (número).
+    - Um pesquisador pode ter várias instituições, ligadas por `researcher_institution` (`researcher_id`, `institution_id`). Para pesquisadores por instituição, junte `researcher`, `researcher_institution` e `institution` e conte com `COUNT(DISTINCT r.id)`; somar instituições pode contar o mesmo pesquisador mais de uma vez. Não há correspondência entre `institution` e as instituições do fomento.
     - `researcher_production` tem as contagens de produção de cada pesquisador, prontas para rankings.
     - Ligação com o fomento: `researcher.lattes_id` é o mesmo identificador de `pesquisadores.lattes` na fonte `fomento`. Cada consulta acessa uma só fonte. Para relacionar as duas, consulte uma delas e filtre a outra com os Lattes obtidos (`lattes_id IN (...)`), no máximo 100 por consulta.
     - Nem todo bolsista do fomento está no Simcc: ao relacionar as fontes, diga quantos dos Lattes consultados foram encontrados. Perguntas que exigem agregar mais de 100 pesquisadores das duas fontes ainda não podem ser respondidas; diga isso ao usuário.
@@ -37,9 +38,9 @@ datasource:
     - question: "Quantas patentes foram concedidas desde 2020?"
       sql: >-
         SELECT COUNT(*) FROM public.mv_canonical_patents WHERE grant_date >= '2020-01-01'
-    - question: "Projetos de pesquisa sobre dengue"
+    - question: "Projetos de pesquisa do currículo sobre educação"
       sql: >-
-        SELECT title, start_year, agency_name FROM public.mv_canonical_research_projects WHERE MATCH_TEXT(title, 'dengue', 'arbovirose') ORDER BY start_year DESC
+        SELECT title, start_year, agency_name FROM public.mv_canonical_research_projects WHERE MATCH_TEXT(title, 'educação') ORDER BY start_year DESC
     - question: "Quais pesquisadores têm mais artigos?"
       sql: >-
         SELECT r.name, rp.articles FROM public.researcher_production rp JOIN public.researcher r ON r.id = rp.researcher_id ORDER BY rp.articles DESC LIMIT 10
@@ -67,8 +68,6 @@ entities:
       - name: last_update
         label: Atualização do Lattes
         description: Data da última atualização do currículo Lattes.
-      - name: institution_id
-        description: Instituição do pesquisador.
       - name: city_id
         description: Cidade do pesquisador.
 
@@ -82,6 +81,24 @@ entities:
         label: Nome
       - name: acronym
         label: Sigla
+
+  - name: researcher_institution
+    label: Instituições dos pesquisadores
+    description: >-
+      Liga cada pesquisador às suas instituições de afiliação; um pesquisador
+      pode ter mais de uma.
+    synonyms: [afiliação, vínculo institucional]
+    columns:
+      - name: researcher_id
+        description: Pesquisador.
+      - name: institution_id
+        description: Instituição.
+      - name: workload
+        label: Carga horária
+        description: Carga horária semanal do pesquisador na instituição, em horas.
+      - name: identity_territory
+        label: Território de identidade
+        description: Território de identidade da Bahia do vínculo.
 
   - name: city
     label: Cidades

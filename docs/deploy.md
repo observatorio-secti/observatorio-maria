@@ -127,8 +127,10 @@ Só na primeira vez, ou com `--reset` para recriar as fontes a partir dos YAML:
 
 ```bash
 docker compose -f compose.prod.yaml exec maria-api \
-  python -m observatorio_maria.catalog.seed catalog/fomento.yaml catalog/simcc.yaml
+  python -m observatorio_maria.catalog.seed catalog/fomento.yaml catalog/simcc.yaml catalog/concepts.yaml
 ```
+
+O `catalog/concepts.yaml` cria os conceitos que aparecem nas duas fontes (projetos, instituições e pesquisadores), com a política de resposta, e é aplicado depois das fontes.
 
 Depois do seed, **sincronize** as duas fontes. O seed cria as entidades como ausentes (`present: false`), e só a sincronização, que lê o schema real de cada banco, as marca como presentes. Sem esse passo, a Maria não recebe a ferramenta de consulta e responde que não tem acesso aos dados.
 
@@ -138,6 +140,24 @@ curl -X POST http://localhost:11309/catalog/datasources/simcc/sync
 ```
 
 A sincronização do Simcc também lê os valores das colunas categóricas (`SELECT DISTINCT` somente leitura) e pode levar mais tempo que a do fomento, porque as tabelas de produção são maiores.
+
+### Atualizar um catálogo que já existe
+
+O seed não sobrescreve o que já está no catálogo. Quando um YAML de fonte muda, como na troca dos exemplos few-shot e na entrada de `researcher_institution` no Simcc (issue #2), um catálogo já semeado precisa receber a mudança de outra forma:
+
+- **Sem edições feitas à mão** nas fontes: recrie tudo a partir dos arquivos e sincronize de novo, como no passo 6.
+
+  ```bash
+  docker compose -f compose.prod.yaml exec maria-api \
+    python -m observatorio_maria.catalog.seed --reset catalog/fomento.yaml catalog/simcc.yaml catalog/concepts.yaml
+  ```
+
+- **Com edições feitas à mão:** rode o seed só com `catalog/concepts.yaml` (sem `--reset`), que cria os conceitos e vincula as entidades, e aplique o resto pela demo (aba "Catálogo de dados") ou pela API:
+  - os exemplos e as instruções de `fomento` e `simcc` (`PATCH /catalog/datasources/{id}` com `examples` e `instructions`, copiando dos YAML);
+  - no `simcc`, `researcher_institution` visível e consultável, com as colunas `researcher_id`, `institution_id`, `workload` e `identity_territory` visíveis (`PATCH /catalog/entities/{id}` e `PATCH /catalog/columns/{id}`);
+  - `researcher.institution_id` oculta (`PATCH /catalog/columns/{id}` com `{"visible": false}`).
+
+  Confira o resultado em `GET /catalog/concepts/context` e `GET /catalog/datasources/simcc/context`.
 
 ### 7. Liberar a porta
 
@@ -210,5 +230,5 @@ Depois de corrigir, teste em uma **conversa nova**: o histórico da conversa ant
 ## Cuidados
 
 - **Ordem de inicialização:** suba o fomento e o Simcc antes da Maria, porque as redes externas precisam existir. Se o fomento for derrubado com `down`, a rede dele é recriada e a Maria precisa de um novo `up -d`. A `simcc-network` é externa ao próprio Simcc e não some com o `down` dele.
-- **Portas 5432 do fomento e 5434 do Simcc:** os dois composes expõem o Postgres no host. A Maria não precisa disso, porque acessa os bancos pelas redes internas. Se nada mais usar essas portas, vale fechá-las no firewall.
+- **Porta 5432 do PostgreSQL:** o compose da raiz expõe o Postgres no host na porta 5432. A Maria acessa os bancos pelas redes internas (`simcc-network` e rede do fomento) ou via `localhost:5432` em desenvolvimento local. Em produção externa, se nada mais usar a porta no host, vale fechá-la no firewall.
 - **Segredos:** o `.env` fica fora da imagem (`.dockerignore`) e do Git (`.gitignore`).

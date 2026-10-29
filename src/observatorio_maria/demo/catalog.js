@@ -7,6 +7,8 @@ const catalog = {
   entities: [],
   entity: null,
   view: 'entity',
+  concepts: [],
+  editingConcept: null, // id do conceito em edição; '' para um novo
   loaded: false,
   expanded: new Set(), // colunas com o editor de valores aberto
 };
@@ -314,6 +316,8 @@ function renderEntity() {
   form.queryable.disabled = !entity.visible; // consultável exige visível
   form.label.value = entity.label ?? '';
   form.synonyms.value = entity.synonyms.join(', ');
+  renderConceptOptions();
+  form.concept_id.value = entity.concept_id ?? '';
   form.description.value = entity.description ?? '';
 
   $('cat-columns').replaceChildren(...entity.columns.flatMap(renderColumnRows));
@@ -533,6 +537,114 @@ function renderRejectedExamples(rejected) {
   box.replaceChildren(el('strong', {}, `${rejected.length} exemplo(s) fora do contexto`), list);
 }
 
+// --- Conceitos ----------------------------------------------------------------
+
+async function loadConcepts() {
+  const data = await attempt(() => api('catalog/concepts'));
+  if (!data) return;
+  catalog.concepts = data.concepts;
+  renderConcepts();
+  renderConceptOptions();
+}
+
+function renderConceptOptions() {
+  const select = $('cat-entity-form').concept_id;
+  const current = select.value;
+  select.replaceChildren(
+    el('option', { value: '' }, 'Nenhum'),
+    ...catalog.concepts.map((c) => el('option', { value: c.id }, c.label))
+  );
+  select.value = current;
+}
+
+function renderConcepts() {
+  const items = catalog.concepts.map((concept) => {
+    const li = el('li');
+    const head = el('div', { class: 'concept-head' });
+    head.append(el('strong', {}, concept.label), el('small', { class: 'muted mono' }, concept.id));
+    const actions = el('div', { class: 'actions' });
+    const edit = el('button', { class: 'ghost', type: 'button' }, 'Editar');
+    edit.addEventListener('click', () => editConcept(concept.id));
+    const remove = el('button', { class: 'ghost', type: 'button' }, 'Excluir');
+    remove.addEventListener('click', () => deleteConcept(concept));
+    actions.append(edit, remove);
+    head.append(actions);
+    const entities = el('div', { class: 'concept-entities' });
+    entities.append(
+      ...(concept.entities.length
+        ? concept.entities.map((e) => badge(`${e.datasource_id}: ${e.schema_name}.${e.name}`))
+        : [el('span', { class: 'muted small' }, 'Nenhuma entidade vinculada.')])
+    );
+    li.append(head, entities);
+    if (concept.description) li.append(el('p', { class: 'muted small' }, concept.description));
+    return li;
+  });
+  $('cat-concepts').replaceChildren(...(items.length ? items : [el('li', { class: 'muted' }, 'Nenhum conceito.')]));
+}
+
+function editConcept(id) {
+  const concept = catalog.concepts.find((c) => c.id === id);
+  const form = $('cat-concept-form');
+  catalog.editingConcept = id ?? '';
+  form.hidden = false;
+  $('cat-concept-title').textContent = concept ? `Editar ${concept.label}` : 'Novo conceito';
+  form.id.value = concept?.id ?? '';
+  form.id.disabled = Boolean(concept); // o identificador não muda
+  form.label.value = concept?.label ?? '';
+  form.synonyms.value = concept?.synonyms.join(', ') ?? '';
+  form.description.value = concept?.description ?? '';
+  form.instructions.value = concept?.instructions ?? '';
+  (concept ? form.label : form.id).focus();
+}
+
+function closeConceptForm() {
+  catalog.editingConcept = null;
+  $('cat-concept-form').hidden = true;
+}
+
+async function loadConceptsContext() {
+  const data = await attempt(() => api('catalog/concepts/context'));
+  if (!data) return;
+  $('cat-concepts-context').textContent =
+    data.content ||
+    'Nenhum conceito tem entidades visíveis em duas ou mais fontes ativas: a seção não entra no prompt.';
+}
+
+async function saveConcept(event) {
+  event.preventDefault();
+  const form = event.target;
+  const changes = {
+    label: form.label.value.trim(),
+    synonyms: splitList(form.synonyms.value),
+    description: nullable(form.description.value),
+    instructions: nullable(form.instructions.value),
+  };
+  const id = catalog.editingConcept;
+  const saved = await attempt(() =>
+    id
+      ? api(`catalog/concepts/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) })
+      : api('catalog/concepts', { method: 'POST', body: JSON.stringify({ id: form.id.value.trim(), ...changes }) })
+  );
+  if (!saved) return;
+  flash('cat-concept-saved');
+  closeConceptForm();
+  await loadConcepts();
+  await loadConceptsContext();
+}
+
+async function deleteConcept(concept) {
+  if (!confirm(`Excluir o conceito "${concept.label}"? As entidades ficam sem conceito.`)) return;
+  const deleted = await attempt(async () => {
+    await api(`catalog/concepts/${encodeURIComponent(concept.id)}`, { method: 'DELETE' });
+    return true;
+  });
+  if (!deleted) return;
+  if (catalog.editingConcept === concept.id) closeConceptForm();
+  await loadConcepts();
+  await loadConceptsContext();
+  if (catalog.entity) await selectEntity(catalog.entity.id);
+}
+
 function showView(view) {
   catalog.view = view;
   document.querySelectorAll('.subtab').forEach((t) => t.classList.toggle('active', t.dataset.view === view));
@@ -542,6 +654,10 @@ function showView(view) {
 async function refreshView() {
   if (catalog.view === 'relationships') await loadRelationships();
   if (catalog.view === 'context') await loadContext();
+  if (catalog.view === 'concepts') {
+    await loadConcepts();
+    await loadConceptsContext();
+  }
 }
 
 // --- Eventos -----------------------------------------------------------------
@@ -572,9 +688,17 @@ entityForm.addEventListener('submit', async (event) => {
     label: nullable(entityForm.label.value),
     description: nullable(entityForm.description.value),
     synonyms: splitList(entityForm.synonyms.value),
+    concept_id: entityForm.concept_id.value || null,
   });
-  if (saved) flash('cat-entity-saved');
+  if (saved) {
+    flash('cat-entity-saved');
+    await loadConcepts();
+  }
 });
+
+$('cat-concept-new').addEventListener('click', () => editConcept(null));
+$('cat-concept-cancel').addEventListener('click', closeConceptForm);
+$('cat-concept-form').addEventListener('submit', saveConcept);
 
 $('view-source').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -596,6 +720,6 @@ $('view-source').addEventListener('submit', async (event) => {
 document.querySelector('.tab[data-tab="catalog"]').addEventListener('click', () => {
   if (!catalog.loaded) {
     catalog.loaded = true;
-    loadDatasources();
+    loadConcepts().then(loadDatasources);
   }
 });

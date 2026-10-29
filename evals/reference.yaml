@@ -201,11 +201,14 @@ questions:
     checks:
       - type: sources
         required: [simcc]
+      # Os dois líderes estão empatados com 8; citar o terceiro não é
+      # exigido, porque a pergunta pede quem mais publicou.
       - type: list
         items:
           - Mauricio José De Souza Neto
           - Lidia Maria Santana Bispo De Jesus
-          - Rayana Santedícola Andrade
+      - type: numbers
+        values: [8]
     verify:
       - source: simcc
         sql: >-
@@ -213,7 +216,7 @@ questions:
           FROM public.researcher r
           JOIN public.bibliographic_production bp ON bp.researcher_id = r.id
           WHERE bp.type = 'BOOK_CHAPTER' AND bp.year_ >= 2020
-          GROUP BY r.name ORDER BY capitulos DESC LIMIT 3
+          GROUP BY r.name ORDER BY capitulos DESC LIMIT 2
 
   # --- D. Busca textual ------------------------------------------------------
 
@@ -339,22 +342,23 @@ questions:
 
   - id: projetos-dengue
     question: Quantos projetos sobre dengue existem?
-    tags: [issue-2, exemplo]
+    tags: [issue-2]
     checks:
       - type: sources
         required: [fomento]
+      # Projetos com dengue no título ou no resumo.
       - type: numbers
-        values: [133]
+        values: [135]
       - type: judge
         criterion: >-
           Identifica que o número se refere a projetos com bolsa do fomento
-          e menciona que o Simcc tem projetos de pesquisa do currículo
-          Lattes, que podem ser consultados à parte.
+          e menciona, em pelo menos uma frase, que o Simcc tem projetos de
+          pesquisa do currículo Lattes, sem somá-los ao número do fomento.
     verify:
       - source: fomento
         sql: >-
           SELECT COUNT(*) AS total FROM public.projetos
-          WHERE MATCH_TEXT(resumo, 'dengue')
+          WHERE MATCH_TEXT(nome, 'dengue') OR MATCH_TEXT(resumo, 'dengue')
 
   - id: total-instituicoes
     question: Quantas instituições há na base?
@@ -393,8 +397,10 @@ questions:
     checks:
       - type: judge
         criterion: >-
-          Diz que a cidade dos bolsistas não está disponível na base, sem
-          inventar uma cidade ou um número. Usar a cidade da instituição
+          Diz que a cidade dos bolsistas não está disponível na base e não
+          apresenta uma cidade nem um número de bolsistas por cidade. Citar
+          outros números consultados, como o total de bolsas, é aceito.
+          Usar a cidade da instituição
           também é aceito, desde que a resposta deixe claro que é a cidade
           da instituição, e não a do bolsista.
 

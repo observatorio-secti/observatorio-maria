@@ -142,6 +142,7 @@
               <button role="tab" class="subtab" data-view="relationships">Relacionamentos</button>
               <button role="tab" class="subtab" data-view="context">O que a Maria enxerga</button>
               <button role="tab" class="subtab" data-view="source">Fonte</button>
+              <button role="tab" class="subtab" data-view="concepts">Conceitos</button>
             </nav>
 
             <div class="view active" id="view-entity">
@@ -158,6 +159,7 @@
                 <div class="form-grid">
                   <label class="field"><span>Rótulo</span><input name="label" maxlength="200" /></label>
                   <label class="field"><span>Sinônimos <em class="muted">(separados por vírgula)</em></span><input name="synonyms" /></label>
+                  <label class="field"><span>Conceito <em class="muted">(assunto também em outras fontes)</em></span><select name="concept_id"></select></label>
                   <label class="field wide"><span>Descrição</span><textarea name="description" rows="2"></textarea></label>
                 </div>
                 <div class="form-actions">
@@ -207,6 +209,31 @@
                 <span class="muted small" id="cat-source-saved" aria-live="polite"></span>
               </div>
             </form>
+
+            <div class="view" id="view-concepts">
+              <p class="muted small">Assuntos que aparecem em mais de uma fonte com significados diferentes. A política diz ao modelo qual fonte usar e como citar a outra. Vale para todas as fontes.</p>
+              <ul class="concept-list" id="cat-concepts"></ul>
+              <div class="form-actions">
+                <button class="ghost" type="button" id="cat-concept-new">Novo conceito</button>
+              </div>
+              <form id="cat-concept-form" hidden>
+                <h4 id="cat-concept-title"></h4>
+                <div class="form-grid">
+                  <label class="field"><span>Identificador <em class="muted">(minúsculas, não muda depois)</em></span><input name="id" pattern="[a-z][a-z0-9_\-]*" maxlength="64" required /></label>
+                  <label class="field"><span>Rótulo</span><input name="label" maxlength="200" required /></label>
+                  <label class="field wide"><span>Sinônimos <em class="muted">(separados por vírgula)</em></span><input name="synonyms" /></label>
+                  <label class="field wide"><span>Descrição</span><textarea name="description" rows="2"></textarea></label>
+                  <label class="field wide"><span>Política de resposta para a IA</span><textarea name="instructions" rows="6"></textarea></label>
+                </div>
+                <div class="form-actions">
+                  <button class="primary" type="submit">Salvar conceito</button>
+                  <button class="ghost" type="button" id="cat-concept-cancel">Cancelar</button>
+                  <span class="muted small" id="cat-concept-saved" aria-live="polite"></span>
+                </div>
+              </form>
+              <h4>O que a Maria enxerga</h4>
+              <pre class="context-preview" id="cat-concepts-context"></pre>
+            </div>
           </div>
         </div>
       </section>

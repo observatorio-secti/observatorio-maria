@@ -9,10 +9,12 @@ from zoneinfo import ZoneInfo
 import pytest
 from langchain_core.messages import AIMessage, SystemMessage
 from pydantic import ValidationError
+from sqlalchemy import select
 
 from observatorio_maria.app import app
 from observatorio_maria.catalog.context import render_context
 from observatorio_maria.catalog.sync import load_entities, load_relationships
+from observatorio_maria.llm.prompts import build_system_prompt
 from observatorio_maria.llm.registry import (
     ModelRegistry,
     ModelTier,
@@ -21,6 +23,7 @@ from observatorio_maria.llm.registry import (
 )
 from observatorio_maria.models import (
     CatalogColumn,
+    CatalogConcept,
     CatalogDataSource,
     CatalogEntity,
     Conversation,
@@ -946,3 +949,59 @@ async def test_query_observer_records_source_sql_and_errors(
     assert first.error is None
     assert second.error
     assert second.row_count == 0
+
+
+async def link_concept(session, *entity_names):
+    session.add(
+        CatalogConcept(
+            id='projetos',
+            label='Projetos',
+            instructions='- Pergunta genérica: fomento, mencionando o Simcc.',
+        )
+    )
+    for entity in await session.scalars(
+        select(CatalogEntity).where(CatalogEntity.name.in_(entity_names))
+    ):
+        entity.concept_id = 'projetos'
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_has_concepts_before_sources(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    await setup_simcc(session)
+    await link_concept(session, 'projetos', 'researcher')
+
+    prompt = await first_system_prompt(client, conversation)
+    preview = (await client.get('/catalog/concepts/context')).json()
+
+    assert preview['content'].strip() in prompt
+    assert 'fomento, mencionando o Simcc' in prompt
+    assert prompt.index('# Conceitos em várias fontes') < prompt.index(
+        '# Fonte de dados: Fomento à Pesquisa'
+    )
+    assert 'Conceito: Projetos' in prompt
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_without_concepts_for_single_source(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    await setup_simcc(session, enabled=False)
+    await link_concept(session, 'projetos', 'researcher')
+
+    prompt = await first_system_prompt(client, conversation)
+    preview = (await client.get('/catalog/concepts/context')).json()
+
+    assert '# Conceitos em várias fontes' not in prompt
+    assert not preview['content']
+
+
+def test_tool_rules_have_no_research_theme():
+    prompt = build_system_prompt()
+
+    assert 'dengue' not in prompt.lower()
+    assert 'arbovirose' not in prompt.lower()

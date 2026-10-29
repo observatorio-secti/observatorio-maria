@@ -6,7 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from observatorio_maria.catalog.context import check_examples, render_context
+from observatorio_maria.catalog.context import (
+    check_examples,
+    load_concept_labels,
+    load_concepts_context,
+    render_context,
+)
 from observatorio_maria.catalog.drift import check_datasource
 from observatorio_maria.catalog.introspection import (
     ConnectionNotConfiguredError,
@@ -23,11 +28,14 @@ from observatorio_maria.catalog.sync import (
 )
 from observatorio_maria.catalog.yaml_io import (
     dump_catalog_file,
+    dump_concepts_file,
     export_catalog,
+    export_concepts,
 )
 from observatorio_maria.database import get_session
 from observatorio_maria.models import (
     CatalogColumn,
+    CatalogConcept,
     CatalogDataSource,
     CatalogEntity,
     CatalogRelationship,
@@ -37,6 +45,12 @@ from observatorio_maria.schemas import (
     CheckResultPublic,
     ColumnPublic,
     ColumnUpdate,
+    ConceptContextPreview,
+    ConceptCreate,
+    ConceptEntity,
+    ConceptList,
+    ConceptPublic,
+    ConceptUpdate,
     ContextPreview,
     DataSourceCreate,
     DataSourceList,
@@ -49,6 +63,9 @@ from observatorio_maria.schemas import (
     RelationshipPublic,
     RelationshipUpdate,
     SyncReportPublic,
+)
+from observatorio_maria.services.chat import (
+    get_consultable_sources_and_contexts,
 )
 
 router = APIRouter(prefix='/catalog', tags=['catalog'])
@@ -118,6 +135,7 @@ def entity_payload(entity: CatalogEntity, *, detail: bool = False):
                 'label',
                 'description',
                 'synonyms',
+                'concept_id',
                 'visible',
                 'queryable',
                 'present',
@@ -265,6 +283,7 @@ async def preview_context(datasource: CurrentDataSource, session: Session):
         datasource,
         entities,
         await load_relationships(session, datasource.id),
+        await load_concept_labels(session),
     )
     _, rejected = check_examples(datasource, entities)
     return ContextPreview(
@@ -321,6 +340,12 @@ async def update_entity(
                 detail='Uma entidade consultável precisa ser visível',
             )
         changes['queryable'] = False
+    concept_id = changes.get('concept_id')
+    if concept_id and not await session.get(CatalogConcept, concept_id):
+        raise HTTPException(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail=f"Conceito '{concept_id}' não encontrado",
+        )
     for field, value in changes.items():
         setattr(entity, field, value)
     await session.commit()
@@ -341,6 +366,126 @@ async def update_column(column_id: UUID, data: ColumnUpdate, session: Session):
         column.observed_values = None
     await session.commit()
     return column
+
+
+# --- Conceitos ---------------------------------------------------------------
+
+
+async def get_concept(concept_id: str, session: Session):
+    concept = await session.get(CatalogConcept, concept_id)
+    if not concept:
+        raise not_found('Conceito não encontrado')
+    return concept
+
+
+CurrentConcept = Annotated[CatalogConcept, Depends(get_concept)]
+
+
+async def concept_payloads(session: AsyncSession, concepts):
+    entities = await session.scalars(
+        select(CatalogEntity)
+        .where(CatalogEntity.concept_id.in_([c.id for c in concepts]))
+        .order_by(
+            CatalogEntity.datasource_id,
+            CatalogEntity.schema_name,
+            CatalogEntity.name,
+        )
+    )
+    by_concept: dict[str, list] = {}
+    for entity in entities:
+        by_concept.setdefault(entity.concept_id, []).append(entity)
+    return [
+        ConceptPublic.model_validate(concept).model_copy(
+            update={
+                'entities': [
+                    ConceptEntity(
+                        id=e.id,
+                        datasource_id=e.datasource_id,
+                        schema_name=e.schema_name,
+                        name=e.name,
+                        label=e.label,
+                    )
+                    for e in by_concept.get(concept.id, [])
+                ]
+            }
+        )
+        for concept in concepts
+    ]
+
+
+@router.get('/concepts', response_model=ConceptList)
+async def list_concepts(session: Session):
+    concepts = await session.scalars(
+        select(CatalogConcept).order_by(CatalogConcept.label)
+    )
+    return {'concepts': await concept_payloads(session, concepts.all())}
+
+
+@router.post(
+    '/concepts', status_code=HTTPStatus.CREATED, response_model=ConceptPublic
+)
+async def create_concept(data: ConceptCreate, session: Session):
+    if await session.get(CatalogConcept, data.id):
+        raise HTTPException(
+            status_code=HTTPStatus.CONFLICT,
+            detail='Já existe um conceito com esse identificador',
+        )
+    concept = CatalogConcept(**data.model_dump())
+    session.add(concept)
+    await session.commit()
+    (payload,) = await concept_payloads(session, [concept])
+    return payload
+
+
+@router.get('/concepts/context', response_model=ConceptContextPreview)
+async def preview_concepts_context(session: Session):
+    """Seção de conceitos para as fontes que entram hoje no prompt."""
+    datasources, _ = await get_consultable_sources_and_contexts(session)
+    return {'content': await load_concepts_context(session, datasources)}
+
+
+@router.get(
+    '/concepts/export',
+    response_class=Response,
+    responses={200: {'content': {'application/yaml': {}}}},
+)
+async def export_concepts_yaml(session: Session):
+    return Response(
+        dump_concepts_file(await export_concepts(session)),
+        media_type='application/yaml',
+        headers={
+            'Content-Disposition': 'attachment; filename="concepts.yaml"'
+        },
+    )
+
+
+@router.get('/concepts/{concept_id}', response_model=ConceptPublic)
+async def read_concept(concept: CurrentConcept, session: Session):
+    (payload,) = await concept_payloads(session, [concept])
+    return payload
+
+
+@router.patch('/concepts/{concept_id}', response_model=ConceptPublic)
+async def update_concept(
+    data: ConceptUpdate, concept: CurrentConcept, session: Session
+):
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(concept, field, value)
+    await session.commit()
+    (payload,) = await concept_payloads(session, [concept])
+    return payload
+
+
+@router.delete('/concepts/{concept_id}', status_code=HTTPStatus.NO_CONTENT)
+async def delete_concept(concept: CurrentConcept, session: Session):
+    # As entidades ficam sem conceito (ON DELETE SET NULL); o mesmo é feito
+    # na sessão, para os objetos já carregados não ficarem desatualizados.
+    for entity in await session.scalars(
+        select(CatalogEntity).where(CatalogEntity.concept_id == concept.id)
+    ):
+        entity.concept_id = None
+    await session.delete(concept)
+    await session.commit()
 
 
 # --- Relacionamentos ---------------------------------------------------------

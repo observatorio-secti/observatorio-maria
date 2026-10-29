@@ -4,12 +4,13 @@ O YAML é ponto de partida, não fonte de verdade: o seed só cria o que ainda
 não existe no catálogo (ou recria a fonte inteira com `reset`).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from observatorio_maria.catalog.sync import (
@@ -19,6 +20,7 @@ from observatorio_maria.catalog.sync import (
 )
 from observatorio_maria.models import (
     CatalogColumn,
+    CatalogConcept,
     CatalogDataSource,
     CatalogEntity,
     CatalogRelationship,
@@ -29,8 +31,12 @@ from observatorio_maria.models import (
 SLUG_PATTERN = r'^[a-z][a-z0-9_-]{0,63}$'
 ENV_PATTERN = r'^[A-Z_][A-Z0-9_]{0,99}$'
 
+# Entidade de um conceito: `fonte:schema.entidade`.
+ENTITY_REF_PATTERN = r'^[a-z][a-z0-9_-]{0,63}:[^.:\s]+\.[^.:\s]+$'
+
 Slug = Annotated[str, Field(pattern=SLUG_PATTERN)]
 EnvName = Annotated[str, Field(pattern=ENV_PATTERN)]
+EntityRef = Annotated[str, Field(pattern=ENTITY_REF_PATTERN)]
 
 
 class CatalogFileError(ValueError):
@@ -119,6 +125,33 @@ class CatalogFile(BaseModel):
     relationships: list[RelationshipDoc] = []
 
 
+class ConceptDoc(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    id: Slug
+    label: str = Field(min_length=1, max_length=200)
+    description: str | None = None
+    synonyms: list[str] = []
+    instructions: str | None = None
+    entities: list[EntityRef] = []
+
+
+class ConceptsFile(BaseModel):
+    """Arquivo de conceitos: assuntos que aparecem em mais de uma fonte."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    concepts: list[ConceptDoc]
+
+    @model_validator(mode='after')
+    def unique_ids(self) -> Self:
+        ids = [c.id for c in self.concepts]
+        repeated = sorted({i for i in ids if ids.count(i) > 1})
+        if repeated:
+            raise ValueError(f'conceito(s) repetido(s): {", ".join(repeated)}')
+        return self
+
+
 @dataclass
 class SeedReport:
     datasource_created: bool = False
@@ -127,9 +160,28 @@ class SeedReport:
     relationships: int = 0
 
 
+@dataclass
+class ConceptSeedReport:
+    created: int = 0
+    linked: int = 0
+    # Entidades citadas no arquivo que não estão no catálogo.
+    missing: list[str] = field(default_factory=list)
+
+
 def load_catalog_file(path: Path) -> CatalogFile:
     try:
         data = yaml.safe_load(path.read_text(encoding='utf-8'))
+        return CatalogFile.model_validate(data)
+    except (yaml.YAMLError, ValueError) as exc:
+        raise CatalogFileError(f'{path}: {exc}') from exc
+
+
+def load_seed_file(path: Path) -> CatalogFile | ConceptsFile:
+    """Arquivo de fonte (`datasource:`) ou de conceitos (`concepts:`)."""
+    try:
+        data = yaml.safe_load(path.read_text(encoding='utf-8'))
+        if isinstance(data, dict) and 'concepts' in data:
+            return ConceptsFile.model_validate(data)
         return CatalogFile.model_validate(data)
     except (yaml.YAMLError, ValueError) as exc:
         raise CatalogFileError(f'{path}: {exc}') from exc
@@ -145,6 +197,13 @@ def _represent_str(dumper, value):
 
 
 _Dumper.add_representer(str, _represent_str)
+
+
+def dump_concepts_file(document: ConceptsFile) -> str:
+    data = document.model_dump(mode='json', exclude_defaults=True)
+    return yaml.dump(
+        data, Dumper=_Dumper, allow_unicode=True, sort_keys=False, width=88
+    )
 
 
 def dump_catalog_file(document: CatalogFile) -> str:
@@ -370,4 +429,88 @@ async def export_catalog(
             )
             for r in relationships
         ],
+    )
+
+
+def _parse_entity_ref(ref: str) -> tuple[str, str, str]:
+    datasource_id, qualified = ref.split(':', 1)
+    schema_name, name = qualified.split('.', 1)
+    return datasource_id, schema_name, name
+
+
+async def _find_entity(session: AsyncSession, ref: str):
+    datasource_id, schema_name, name = _parse_entity_ref(ref)
+    return await session.scalar(
+        select(CatalogEntity).where(
+            CatalogEntity.datasource_id == datasource_id,
+            CatalogEntity.schema_name == schema_name,
+            CatalogEntity.name == name,
+        )
+    )
+
+
+async def seed_concepts(
+    session: AsyncSession, document: ConceptsFile, *, reset: bool = False
+) -> ConceptSeedReport:
+    """Cria os conceitos que faltam e vincula as entidades sem conceito.
+
+    Com `reset`, recria os conceitos do arquivo e seus vínculos; conceitos
+    que não estão no arquivo ficam como estão.
+    """
+    report = ConceptSeedReport()
+    for doc in document.concepts:
+        concept = await session.get(CatalogConcept, doc.id)
+        if concept is not None and reset:
+            for entity in await session.scalars(
+                select(CatalogEntity).where(CatalogEntity.concept_id == doc.id)
+            ):
+                entity.concept_id = None
+            await session.delete(concept)
+            await session.flush()
+            concept = None
+        if concept is None:
+            session.add(CatalogConcept(**doc.model_dump(exclude={'entities'})))
+            await session.flush()
+            report.created += 1
+        for ref in doc.entities:
+            entity = await _find_entity(session, ref)
+            if entity is None:
+                report.missing.append(ref)
+            elif entity.concept_id is None:
+                entity.concept_id = doc.id
+                report.linked += 1
+    await session.commit()
+    return report
+
+
+async def export_concepts(session: AsyncSession) -> ConceptsFile:
+    concepts = await session.scalars(
+        select(CatalogConcept).order_by(CatalogConcept.id)
+    )
+    entities = await session.scalars(
+        select(CatalogEntity)
+        .where(CatalogEntity.concept_id.is_not(None))
+        .order_by(
+            CatalogEntity.datasource_id,
+            CatalogEntity.schema_name,
+            CatalogEntity.name,
+        )
+    )
+    refs: dict[str, list[str]] = {}
+    for entity in entities:
+        refs.setdefault(entity.concept_id, []).append(
+            f'{entity.datasource_id}:{entity.qualified_name}'
+        )
+    return ConceptsFile(
+        concepts=[
+            ConceptDoc(
+                id=concept.id,
+                label=concept.label,
+                description=concept.description,
+                synonyms=concept.synonyms,
+                instructions=concept.instructions,
+                entities=refs.get(concept.id, []),
+            )
+            for concept in concepts
+        ]
     )

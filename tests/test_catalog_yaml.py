@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from pathlib import Path
 
@@ -426,3 +427,39 @@ async def test_simcc_technical_columns_hidden_after_sync(session, tmp_path):
         'platform_authors',
     ):
         assert name not in text
+
+
+def match_text_terms(sql):
+    terms = set()
+    for args in re.findall(r'MATCH_TEXT\(\s*[^,]+,([^)]*)\)', sql):
+        terms |= {t.strip().strip("'").lower() for t in args.split(',')}
+    return terms
+
+
+def test_seed_examples_do_not_repeat_across_sources():
+    """Um exemplo repetido entre fontes ensina o modelo a escolher uma delas
+    para a pergunta ambígua (issue #2)."""
+    fomento, simcc = (
+        load_catalog_file(Path(f'catalog/{name}.yaml')).datasource.examples
+        for name in ('fomento', 'simcc')
+    )
+
+    questions = {e.question.lower() for e in fomento}
+    assert questions & {e.question.lower() for e in simcc} == set()
+    fomento_terms = set().union(*(match_text_terms(e.sql) for e in fomento))
+    simcc_terms = set().union(*(match_text_terms(e.sql) for e in simcc))
+    assert fomento_terms
+    assert simcc_terms
+    assert fomento_terms & simcc_terms == set()
+
+
+def test_simcc_seed_links_researchers_by_researcher_institution():
+    document = load_catalog_file(Path('catalog/simcc.yaml'))
+    entities = {e.name: e for e in document.entities}
+
+    researcher_columns = {c.name for c in entities['researcher'].columns}
+    assert 'institution_id' not in researcher_columns
+    link = {c.name for c in entities['researcher_institution'].columns}
+    assert {'researcher_id', 'institution_id'} <= link
+    assert 'researcher_institution' in document.datasource.instructions
+    assert 'COUNT(DISTINCT' in document.datasource.instructions
