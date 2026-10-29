@@ -11,6 +11,7 @@ from observatorio_maria.models import (
     MessageRole,
     RelationshipOrigin,
     SchemaStatus,
+    ValueListing,
 )
 
 
@@ -301,6 +302,7 @@ class ColumnPublic(BaseModel):
     visible: bool
     access: ColumnAccess
     searchable: bool
+    list_values: ValueListing
     present: bool
 
 
@@ -314,6 +316,7 @@ class ColumnUpdate(BaseModel):
     visible: bool = None
     access: ColumnAccess = None
     searchable: bool = None
+    list_values: ValueListing = None
 
 
 class EntitySummary(BaseModel):

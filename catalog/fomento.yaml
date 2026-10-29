@@ -7,6 +7,10 @@
 # Entidades e colunas listadas aqui ficam visíveis (e as entidades,
 # consultáveis) por padrão. O que não está listado entra oculto na
 # sincronização: tabelas de ingestão, conflitos e alembic_version.
+#
+# `list_values: never` marca colunas de texto que não são categorias (nomes,
+# códigos, datas e indicadores guardados como texto): os valores podem ser
+# lidos da origem, mas não vão para o contexto do modelo.
 
 datasource:
   id: fomento
@@ -233,8 +237,10 @@ entities:
       - name: id
         description: Identificador interno.
       - name: nome
+        list_values: never
         label: Nome
       - name: nome_normalizado
+        list_values: never
         description: Nome sem acentos e em minúsculas, para buscas.
 
   - name: mv_bolsas_metricas

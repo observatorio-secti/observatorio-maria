@@ -382,7 +382,7 @@ async def test_list_and_disable_relationship(client, synced):
         ('main.bolsas', ['instituicao_id'], 'main.instituicoes'),
         ('main.bolsas', ['pesquisador_id'], 'main.pesquisadores'),
     ]
-    link = '`main.bolsas.pesquisador_id` -> `main.pesquisadores.id`'
+    link = '→ main.pesquisadores.id'
     context = await client.get('/catalog/datasources/origem/context')
     assert link in context.json()['content']
 
@@ -530,3 +530,21 @@ async def test_export_includes_auto_sync(client, synced):
     response = await client.get('/catalog/datasources/origem/export')
 
     assert yaml.safe_load(response.text)['datasource']['auto_sync'] is True
+
+
+async def test_update_column_list_values(client, synced):
+    status = (await entity_detail(client, 'bolsas'))['columns'][1]
+    path = f'/catalog/columns/{status["id"]}'
+    assert status['list_values'] == 'auto'
+
+    response = await client.patch(path, json={'list_values': 'never'})
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()['list_values'] == 'never'
+    invalid = await client.patch(path, json={'list_values': 'sim'})
+    assert invalid.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+    await client.post('/catalog/datasources/origem/sync')
+
+    status = (await entity_detail(client, 'bolsas'))['columns'][1]
+    assert status['list_values'] == 'never'

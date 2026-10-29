@@ -26,6 +26,7 @@ from observatorio_maria.models import (
     CatalogRelationship,
     ColumnAccess,
     RelationshipOrigin,
+    ValueListing,
 )
 
 SLUG_PATTERN = r'^[a-z][a-z0-9_-]{0,63}$'
@@ -61,6 +62,7 @@ class ColumnDoc(BaseModel):
     visible: bool = True
     access: ColumnAccess = ColumnAccess.FULL
     searchable: bool = False
+    list_values: ValueListing = ValueListing.AUTO
 
 
 class EntityDoc(BaseModel):
@@ -360,6 +362,7 @@ def _column_doc(column: CatalogColumn) -> dict[str, Any]:
         'visible': column.visible,
         'access': column.access,
         'searchable': column.searchable,
+        'list_values': column.list_values,
     }
 
 

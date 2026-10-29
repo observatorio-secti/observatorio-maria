@@ -52,6 +52,7 @@ entities:
     columns:
       - name: nome
         access: aggregate
+        list_values: never
       - name: lattes
         visible: false
   - name: bolsas_por_status
@@ -225,6 +226,8 @@ async def test_export_round_trip(session, document, source_db):
     assert 'bolsas_por_status.status' in text
     assert 'searchable: true' in text
     assert 'Quantas bolsas ativas?' in text
+    assert text.count('list_values: never') == 1
+    assert 'list_values: auto' not in text
 
 
 def test_seed_cli_reports_invalid_file(tmp_path, capsys):
@@ -463,3 +466,50 @@ def test_simcc_seed_links_researchers_by_researcher_institution():
     assert {'researcher_id', 'institution_id'} <= link
     assert 'researcher_institution' in document.datasource.instructions
     assert 'COUNT(DISTINCT' in document.datasource.instructions
+
+
+async def test_seed_applies_list_values(session, document):
+    await seed_catalog(session, document)
+
+    entities = by_name(await load_entities(session, 'origem'))
+    columns = {c.name: c for c in entities['pesquisadores'].columns}
+    assert columns['nome'].list_values == 'never'
+    assert columns['lattes'].list_values == 'auto'
+
+
+def test_invalid_list_values_is_rejected(tmp_path):
+    path = tmp_path / 'ruim.yaml'
+    path.write_text(
+        CATALOG_YAML.replace('list_values: never', 'list_values: sim'),
+        encoding='utf-8',
+    )
+
+    with pytest.raises(CatalogFileError, match='list_values'):
+        load_catalog_file(path)
+
+
+def test_seeds_mark_non_category_columns():
+    simcc = load_catalog_file(Path('catalog/simcc.yaml'))
+    never = {
+        (e.name, c.name)
+        for e in simcc.entities
+        for c in e.columns
+        if c.list_values == 'never'
+    }
+
+    assert {
+        ('researcher', 'orcid'),
+        ('institution', 'name'),
+        ('city', 'name'),
+        ('mv_canonical_articles', 'jcr'),
+    } <= never
+    fomento = load_catalog_file(Path('catalog/fomento.yaml'))
+    territorios = next(
+        e for e in fomento.entities if e.name == 'territorios_identidade'
+    )
+    assert {
+        c.name for c in territorios.columns if c.list_values == 'never'
+    } == {
+        'nome',
+        'nome_normalizado',
+    }

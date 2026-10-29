@@ -9,6 +9,10 @@
 # entram ocultos na sincronização, assim como as demais tabelas do Simcc.
 # Os relacionamentos vêm das chaves estrangeiras da origem. Os valores das
 # colunas categóricas (type, qualis, nature...) são lidos dos dados.
+#
+# `list_values: never` marca colunas de texto que não são categorias (nomes,
+# códigos, datas e indicadores guardados como texto): os valores podem ser
+# lidos da origem, mas não vão para o contexto do modelo.
 
 datasource:
   id: simcc
@@ -61,6 +65,7 @@ entities:
         label: Lattes
         description: Identificador do currículo Lattes (CNPq); igual a pesquisadores.lattes no fomento.
       - name: orcid
+        list_values: never
         label: ORCID
       - name: abstract
         label: Resumo do currículo
@@ -78,6 +83,7 @@ entities:
       - name: id
         description: Identificador interno.
       - name: name
+        list_values: never
         label: Nome
       - name: acronym
         label: Sigla
@@ -106,6 +112,7 @@ entities:
       - name: id
         description: Identificador interno.
       - name: name
+        list_values: never
         label: Nome
       - name: state_id
         description: Estado da cidade.
@@ -116,6 +123,7 @@ entities:
       - name: id
         description: Identificador interno.
       - name: name
+        list_values: never
         label: Nome
       - name: abbreviation
         label: Sigla
@@ -181,6 +189,7 @@ entities:
       - name: qualis
         label: Qualis
       - name: jcr
+        list_values: never
         label: JCR
 
   - name: bibliographic_production_book
@@ -191,8 +200,10 @@ entities:
       - name: isbn
         label: ISBN
       - name: publishing_company
+        list_values: never
         label: Editora
       - name: publishing_company_city
+        list_values: never
         label: Cidade da editora
 
   - name: bibliographic_production_book_chapter
@@ -224,14 +235,18 @@ entities:
       - name: category
         label: Categoria
       - name: code
+        list_values: never
         label: Código
       - name: development_year
+        list_values: never
         label: Ano de desenvolvimento
         description: Ano em texto, como veio do currículo.
       - name: deposit_date
+        list_values: never
         label: Data de depósito
         description: Data em texto, como veio do currículo.
       - name: grant_date
+        list_values: never
         label: Data de concessão
 
   - name: software
@@ -370,6 +385,7 @@ entities:
       - name: qualis
         label: Qualis
       - name: jcr
+        list_values: never
         label: JCR
       - name: magazine_name
         label: Periódico
@@ -407,8 +423,10 @@ entities:
       - name: isbn
         label: ISBN
       - name: publishing_company
+        list_values: never
         label: Editora
       - name: publishing_company_city
+        list_values: never
         label: Cidade da editora
 
   - name: mv_canonical_book_chapters
@@ -443,13 +461,16 @@ entities:
       - name: year
         label: Ano
       - name: grant_date
+        list_values: never
         label: Data de concessão
       - name: deposit_date
+        list_values: never
         label: Data de depósito
         description: Data em texto, como veio do currículo.
       - name: category
         label: Categoria
       - name: code
+        list_values: never
         label: Código
 
   - name: mv_canonical_software

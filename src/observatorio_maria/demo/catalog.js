@@ -382,7 +382,7 @@ function renderColumnRows(column) {
   const rows = [renderColumnRow(column)];
   if (catalog.expanded.has(column.id)) {
     const tr = el('tr', { class: 'values-row' });
-    const td = el('td', { colspan: 6 });
+    const td = el('td', { colspan: 7 });
     td.append(renderValuesEditor(column));
     tr.append(td);
     rows.push(tr);
@@ -434,6 +434,18 @@ function renderColumnRow(column) {
     })
   );
 
+  // Se os valores conhecidos entram no contexto do modelo.
+  const listing = el('select', { 'aria-label': `Valores no contexto: ${column.name}` });
+  listing.append(
+    el('option', { value: 'auto' }, 'Automático'),
+    el('option', { value: 'always' }, 'Sempre'),
+    el('option', { value: 'never' }, 'Nunca')
+  );
+  listing.value = column.list_values;
+  listing.addEventListener('change', () => patchColumn(column, { list_values: listing.value }));
+  const listingCell = el('td');
+  listingCell.append(listing);
+
   const description = el('input', {
     'aria-label': `Descrição: ${column.name}`,
     placeholder: column.label ?? 'Descreva a coluna…',
@@ -443,7 +455,7 @@ function renderColumnRow(column) {
   const descriptionCell = el('td');
   descriptionCell.append(description);
 
-  tr.append(visible, accessCell, searchable, descriptionCell);
+  tr.append(visible, accessCell, searchable, listingCell, descriptionCell);
   return tr;
 }
 

@@ -103,6 +103,14 @@ class ColumnAccess(StrEnum):
     AGGREGATE = 'aggregate'
 
 
+class ValueListing(StrEnum):
+    """Se os valores conhecidos de uma coluna entram no contexto do modelo."""
+
+    AUTO = 'auto'
+    ALWAYS = 'always'
+    NEVER = 'never'
+
+
 class RelationshipOrigin(StrEnum):
     FOREIGN_KEY = 'foreign_key'
     MANUAL = 'manual'
@@ -261,6 +269,12 @@ class CatalogColumn:
     )
     searchable: Mapped[bool] = mapped_column(
         default=False, server_default=false()
+    )
+    # Editorial: `auto` segue a regra de categorias de catalog/context.py.
+    list_values: Mapped[ValueListing] = mapped_column(
+        String(10),
+        default=ValueListing.AUTO,
+        server_default=ValueListing.AUTO.value,
     )
     present: Mapped[bool] = mapped_column(default=False)
 

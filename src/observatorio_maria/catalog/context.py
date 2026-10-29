@@ -15,6 +15,7 @@ from observatorio_maria.models import (
     CatalogRelationship,
     ColumnAccess,
     EntityKind,
+    ValueListing,
 )
 from observatorio_maria.query.errors import QueryValidationError
 from observatorio_maria.query.validator import (
@@ -22,6 +23,7 @@ from observatorio_maria.query.validator import (
     source_dialect,
     validate_query,
 )
+from observatorio_maria.settings import Settings
 
 KIND_LABELS = {
     EntityKind.TABLE: 'tabela',
@@ -47,7 +49,39 @@ def _known_values(column: CatalogColumn) -> list[dict]:
     return [described.get(v, {'value': v}) for v in column.source_values]
 
 
-def _column_line(column: CatalogColumn) -> str:
+# Média máxima de caracteres dos valores observados de uma categoria.
+CATEGORY_MAX_AVERAGE_LENGTH = 30
+
+
+def _listed_values(column: CatalogColumn, max_values: int) -> list[dict]:
+    """Valores que entram no contexto, conforme `list_values`.
+
+    Em `auto`, entram os de enum, os de colunas com valores descritos e os
+    observados que parecem uma categoria: coluna não pesquisável, com até
+    `max_values` valores curtos.
+    """
+    if column.list_values == ValueListing.NEVER:
+        return []
+    values = _known_values(column)
+    if column.list_values == ValueListing.ALWAYS or not values:
+        return values
+    if column.enum_values is not None or column.source_values is None:
+        return values
+    if any(item.get('description') for item in column.values):
+        return values
+    average = sum(len(str(v['value'])) for v in values) / len(values)
+    if (
+        column.searchable
+        or len(values) > max_values
+        or average > CATEGORY_MAX_AVERAGE_LENGTH
+    ):
+        return []
+    return values
+
+
+def _column_line(
+    column: CatalogColumn, max_values: int, link: str | None = None
+) -> str:
     details = [column.data_type or 'tipo desconhecido']
     if column.primary_key:
         details.append('chave primária')
@@ -65,19 +99,21 @@ def _column_line(column: CatalogColumn) -> str:
         )
     if column.searchable:
         notes.append('aceita busca textual')
-    values = _known_values(column)
+    values = _listed_values(column, max_values)
     if values:
-        label = 'Valores'
-        if column.enum_values is None and column.observed_values is not None:
-            label = 'Valores existentes na origem (use exatamente como estão)'
-        notes.append(f'{label}: {"; ".join(_value(v) for v in values)}')
+        notes.append(f'Valores: {"; ".join(_value(v) for v in values)}')
     for note in notes:
         line = f'{line.rstrip(".")}. {note}'
+    if link:
+        line = f'{line} {link}'
     return line
 
 
 def _entity_section(
-    entity: CatalogEntity, concept_label: str | None = None
+    entity: CatalogEntity,
+    max_values: int,
+    concept_label: str | None = None,
+    links: dict[str, str] | None = None,
 ) -> list[str]:
     kind = KIND_LABELS.get(entity.kind, entity.kind or 'entidade')
     title = f'### `{entity.qualified_name}` ({kind})'
@@ -97,7 +133,10 @@ def _entity_section(
     columns = [c for c in entity.columns if c.visible and c.present]
     columns.sort(key=lambda c: (c.position is None, c.position, c.name))
     lines.append('Colunas:')
-    lines.extend(_column_line(c) for c in columns)
+    links = links or {}
+    lines.extend(
+        _column_line(c, max_values, links.get(c.name)) for c in columns
+    )
     return lines
 
 
@@ -139,14 +178,64 @@ def check_examples(
     return accepted, rejected
 
 
+def _same_text(a: str | None, b: str | None) -> bool:
+    def clean(text):
+        return (text or '').strip().rstrip('.').casefold()
+
+    return clean(a) == clean(b)
+
+
+def _visible_columns(entity: CatalogEntity) -> set[str]:
+    return {c.name for c in entity.columns if c.visible and c.present}
+
+
+def _column_links(
+    relationships: list[CatalogRelationship],
+    by_id: dict,
+) -> dict:
+    """Relacionamentos na linha da primeira coluna de origem, por entidade.
+
+    Entram só os ligados e presentes, entre entidades incluídas e com todas
+    as colunas das duas pontas visíveis.
+    """
+    links: dict = {}
+    for r in sorted(
+        relationships, key=lambda r: (r.from_columns, r.to_columns)
+    ):
+        source = by_id.get(r.from_entity_id)
+        target = by_id.get(r.to_entity_id)
+        if not (r.enabled and r.present and source and target):
+            continue
+        if not set(r.from_columns) <= _visible_columns(source):
+            continue
+        if not set(r.to_columns) <= _visible_columns(target):
+            continue
+        text = f'→ {target.qualified_name}.{", ".join(r.to_columns)}'
+        if len(r.from_columns) > 1:
+            text += f' (com {", ".join(r.from_columns)})'
+        first = r.from_columns[0]
+        # A descrição só entra quando acrescenta algo à da própria coluna.
+        column_text = next(
+            (c.description for c in source.columns if c.name == first), None
+        )
+        if r.description and not _same_text(r.description, column_text):
+            text += f' ({r.description})'
+        own = links.setdefault(source.id, {})
+        own[first] = f'{own[first]}; {text}' if first in own else text
+    return links
+
+
 def render_context(
     datasource: CatalogDataSource,
     entities: list[CatalogEntity],
     relationships: list[CatalogRelationship],
     concept_labels: dict[str, str] | None = None,
+    max_values: int | None = None,
 ) -> str:
     if not datasource.enabled:
         return ''
+    if max_values is None:
+        max_values = Settings().CATALOG_CONTEXT_VALUES_MAX
 
     included = sorted(
         (e for e in entities if e.visible and e.present),
@@ -162,25 +251,13 @@ def render_context(
     lines += ['', '## Entidades']
     if not included:
         lines.append('Nenhuma entidade disponível.')
+    links = _column_links(relationships, by_id)
     for entity in included:
         label = (concept_labels or {}).get(entity.concept_id)
-        lines += ['', *_entity_section(entity, label)]
-
-    links = []
-    for r in relationships:
-        source = by_id.get(r.from_entity_id)
-        target = by_id.get(r.to_entity_id)
-        if not (r.enabled and r.present and source and target):
-            continue
-        line = (
-            f'- `{source.qualified_name}.{",".join(r.from_columns)}` -> '
-            f'`{target.qualified_name}.{",".join(r.to_columns)}`'
-        )
-        if r.description:
-            line += f': {r.description}'
-        links.append(line)
-    if links:
-        lines += ['', '## Relacionamentos', *sorted(links)]
+        lines += [
+            '',
+            *_entity_section(entity, max_values, label, links.get(entity.id)),
+        ]
 
     accepted, _ = check_examples(datasource, entities)
     lines.extend(_examples_section(accepted))

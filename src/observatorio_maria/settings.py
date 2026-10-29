@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     CATALOG_CHECK_INTERVAL_SECONDS: float = 3600
     # Máximo de valores distintos para uma coluna de texto ser categórica.
     CATALOG_OBSERVED_VALUES_MAX: int = Field(50, ge=1)
+    # Máximo de valores observados para uma coluna em `auto` listá-los no
+    # contexto do modelo; não muda a leitura nem o armazenamento.
+    CATALOG_CONTEXT_VALUES_MAX: int = Field(20, ge=1)
 
     # Consultas a fontes do catálogo e orçamento do agente.
     QUERY_MAX_ROWS: int = Field(100, ge=1)

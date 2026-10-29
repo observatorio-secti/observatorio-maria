@@ -1,4 +1,5 @@
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -15,9 +16,11 @@ from observatorio_maria.catalog.sync import (
 )
 from observatorio_maria.catalog.yaml_io import load_catalog_file, seed_catalog
 from observatorio_maria.models import (
+    CatalogColumn,
     CatalogConcept,
     CatalogDataSource,
     CatalogEntity,
+    CatalogRelationship,
     ColumnAccess,
 )
 
@@ -111,9 +114,15 @@ async def test_relationships_between_included_entities(
 ):
     text = await context(session, datasource)
 
-    assert '- `main.bolsas.pesquisador_id` -> `main.pesquisadores.id`' in text
+    line = next(
+        lin
+        for lin in text.splitlines()
+        if lin.startswith('- `pesquisador_id`')
+    )
+    assert line.endswith('→ main.pesquisadores.id')
     # instituicoes está oculta, então o relacionamento com ela não aparece.
-    assert 'instituicao_id` ->' not in text
+    assert '→ main.instituicoes' not in text
+    assert '## Relacionamentos' not in text
 
 
 async def test_disabled_relationship_stays_out(session, datasource, synced):
@@ -125,7 +134,7 @@ async def test_disabled_relationship_stays_out(session, datasource, synced):
     relationship.enabled = False
     await session.commit()
 
-    assert '## Relacionamentos' not in await context(session, datasource)
+    assert '→ main.pesquisadores.id' not in await context(session, datasource)
 
 
 async def test_disabled_datasource_has_empty_context(
@@ -202,8 +211,7 @@ async def test_observed_values_replace_editorial_ones(
     text = await context(session, datasource)
 
     assert (
-        'Valores existentes na origem (use exatamente como estão): '
-        '`Doutorado - Cotas` = cotas de doutorado; `Mestrado - Cotas`'
+        'Valores: `Doutorado - Cotas` = cotas de doutorado; `Mestrado - Cotas`'
     ) in text
     assert '`Doutorado`' not in text
 
@@ -401,3 +409,184 @@ async def test_entity_section_shows_concept(session, datasource, synced):
     assert 'Conceito: Projetos' in bolsas
     pesquisadores = text.split('### `main.pesquisadores`')[1]
     assert 'Conceito:' not in pesquisadores
+
+
+# --- Listagem de valores e relacionamentos na coluna -------------------------
+
+
+def column(name, **fields):
+    data = {
+        'name': name,
+        'visible': True,
+        'present': True,
+        'data_type': 'TEXT',
+    }
+    return CatalogColumn(entity_id=uuid4(), **{**data, **fields})
+
+
+def entity_with(name, *columns, datasource_id='origem'):
+    entity = CatalogEntity(
+        datasource_id=datasource_id,
+        schema_name='main',
+        name=name,
+        visible=True,
+        queryable=True,
+        present=True,
+    )
+    entity.columns = list(columns)
+    return entity
+
+
+SOURCE = CatalogDataSource(id='origem', name='Origem', connection_env='A')
+
+
+def render(*entities, relationships=(), max_values=20):
+    return render_context(
+        SOURCE, list(entities), list(relationships), max_values=max_values
+    )
+
+
+def line_of(text, name):
+    return next(
+        lin for lin in text.splitlines() if lin.startswith(f'- `{name}`')
+    )
+
+
+def values_line(col, max_values=20):
+    return line_of(
+        render(entity_with('t', col), max_values=max_values), col.name
+    )
+
+
+QUALIS = [f'Q{i}' for i in range(10)]
+
+
+def test_short_category_is_listed():
+    line = values_line(column('qualis', observed_values=QUALIS))
+
+    assert 'Valores: `Q0`; `Q1`' in line
+
+
+def test_too_many_values_are_not_listed():
+    many = [f'v{i}' for i in range(38)]
+
+    assert 'Valores' not in values_line(column('jcr', observed_values=many))
+
+
+def test_long_values_are_not_listed():
+    titles = [
+        'Um título de patente bem longo número ' + str(i) for i in range(4)
+    ]
+
+    assert 'Valores' not in values_line(
+        column('title', observed_values=titles)
+    )
+
+
+def test_searchable_column_is_not_listed():
+    col = column('tipo', observed_values=QUALIS, searchable=True)
+
+    assert 'Valores' not in values_line(col)
+
+
+def test_enum_is_listed_above_limit():
+    col = column('status', enum_values=[f'S{i}' for i in range(30)])
+
+    assert 'Valores: `S0`' in values_line(col)
+
+
+def test_described_values_are_listed_above_limit():
+    many = [f'v{i}' for i in range(30)]
+    col = column(
+        'tipo',
+        observed_values=many,
+        values=[{'value': 'v1', 'description': 'um'}],
+    )
+
+    assert '`v1` = um' in values_line(col)
+
+
+def test_always_lists_and_never_hides():
+    many = [f'v{i}' for i in range(38)]
+
+    always = values_line(
+        column('a', observed_values=many, list_values='always')
+    )
+    never = values_line(
+        column('b', enum_values=['X', 'Y'], list_values='never')
+    )
+
+    assert 'Valores: `v0`' in always
+    assert 'Valores' not in never
+
+
+def test_context_values_max_is_respected():
+    col = column('qualis', observed_values=QUALIS)
+
+    assert 'Valores' not in values_line(col, max_values=5)
+    assert col.observed_values == QUALIS
+
+
+def test_long_values_label_is_gone():
+    text = render(entity_with('t', column('qualis', observed_values=QUALIS)))
+
+    assert 'existentes na origem' not in text
+
+
+def relationship(source, target, from_columns, to_columns, **fields):
+    data = {'enabled': True, 'present': True, 'origin': 'foreign_key'}
+    return CatalogRelationship(
+        datasource_id='origem',
+        from_entity_id=source.id,
+        from_columns=from_columns,
+        to_entity_id=target.id,
+        to_columns=to_columns,
+        **{**data, **fields},
+    )
+
+
+def test_manual_relationship_shows_description():
+    target = entity_with('pessoas', column('id'))
+    source = entity_with('bolsas', column('pessoa_id'))
+    rel = relationship(
+        source, target, ['pessoa_id'], ['id'], description='Bolsista'
+    )
+
+    text = render(source, target, relationships=[rel])
+
+    assert line_of(text, 'pessoa_id').endswith('→ main.pessoas.id (Bolsista)')
+
+
+def test_composite_relationship_on_first_column():
+    target = entity_with('vinculos', column('a'), column('b'))
+    source = entity_with('uso', column('x'), column('y'))
+    rel = relationship(source, target, ['x', 'y'], ['a', 'b'])
+
+    text = render(source, target, relationships=[rel])
+
+    assert line_of(text, 'x').endswith('→ main.vinculos.a, b (com x, y)')
+    assert '→' not in line_of(text, 'y')
+
+
+def test_hidden_source_column_hides_relationship():
+    target = entity_with('pessoas', column('id'))
+    source = entity_with(
+        'bolsas', column('id'), column('pessoa_id', visible=False)
+    )
+    rel = relationship(source, target, ['pessoa_id'], ['id'])
+
+    assert '→' not in render(source, target, relationships=[rel])
+
+
+def test_relationship_description_equal_to_column_is_not_repeated():
+    target = entity_with('projetos', column('id'))
+    source = entity_with(
+        'bolsas', column('projeto_id', description='Projeto da bolsa.')
+    )
+    rel = relationship(
+        source, target, ['projeto_id'], ['id'], description='Projeto da bolsa'
+    )
+
+    line = line_of(render(source, target, relationships=[rel]), 'projeto_id')
+
+    assert line.endswith('Projeto da bolsa. → main.projetos.id')

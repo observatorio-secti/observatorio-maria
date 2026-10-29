@@ -202,6 +202,7 @@ As variáveis são lidas do ambiente e do `.env` pelo `Settings` (pydantic-setti
 | `OPENINFERENCE_HIDE_INPUTS` / `OPENINFERENCE_HIDE_OUTPUTS` | Oculta o texto das mensagens nos traces (LGPD) | `false` |
 | `CATALOG_CHECK_INTERVAL_SECONDS` | Intervalo da verificação de defasagem do catálogo (também roda ao iniciar). `0` desliga | `3600` |
 | `CATALOG_OBSERVED_VALUES_MAX` | Máximo de valores distintos para uma coluna de texto ter seus valores lidos da origem; acima disso é texto livre | `50` |
+| `CATALOG_CONTEXT_VALUES_MAX` | Máximo de valores observados para uma coluna com listagem `auto` listá-los no contexto do modelo. Acima disso, os valores continuam guardados, mas não vão para o prompt | `20` |
 | `QUERY_MAX_ROWS` | Limite máximo de linhas devolvidas por consulta | `100` |
 | `QUERY_TIMEOUT_SECONDS` | Limite de tempo de execução por consulta na origem | `15` |
 | `QUERY_MAX_PER_CALL` | Máximo de consultas SQL executadas por chamada do modelo | `4` |
@@ -323,7 +324,7 @@ Há duas fontes:
 |---|---|
 | **Fonte** | Nome, descrição, **instruções de negócio** para a IA, variável de ambiente com a conexão (nunca a URL), schemas a ler e liga/desliga |
 | **Entidade** (tabela, view ou view materializada) | Rótulo, descrição, sinônimos, **visível** (o modelo enxerga) e **consultável** (o modelo pode consultar). Consultável exige visível |
-| **Coluna** | Rótulo, descrição, sinônimos, valores conhecidos com significado, **visível**, **pesquisável** (habilita busca textual via `MATCH_TEXT`) e **acesso**: `full` (pode ler valores) ou `aggregate` (só filtrar, agrupar e contar; para dados pessoais) |
+| **Coluna** | Rótulo, descrição, sinônimos, valores conhecidos com significado, **visível**, **pesquisável** (habilita busca textual via `MATCH_TEXT`), **listar valores** no contexto (`auto`, `always` ou `never`) e **acesso**: `full` (pode ler valores) ou `aggregate` (só filtrar, agrupar e contar; para dados pessoais) |
 | **Relacionamento** | Liga/desliga e descrição. Vêm das chaves estrangeiras ou, quando não há chave (views), do YAML |
 | **Conceito** | Identificador (slug, imutável), rótulo, descrição, sinônimos e política de resposta. Cada entidade aponta para no máximo um conceito |
 
@@ -352,6 +353,10 @@ Com `auto_sync` ligado na fonte (API, YAML ou demo), uma defasagem é sincroniza
 
 **Valores de enum.** A sincronização lê os valores dos tipos enum nativos (ex.: `bolsa_status`). O contexto do modelo lista os valores **atuais** da origem, com as descrições do catálogo. Cada coluna expõe `undescribed_values` (sem descrição, para revisar) e `obsolete_values` (descritos, mas que não existem mais, e que ficam fora do contexto). 
 **Valores observados.** Colunas de texto sem enum têm os valores lidos dos próprios dados (`SELECT DISTINCT ... LIMIT`, somente leitura, com `QUERY_TIMEOUT_SECONDS` por coluna) na sincronização e em toda verificação, mesmo sem defasagem. Só são lidas colunas visíveis, presentes e com acesso `full`, de entidades visíveis, presentes e consultáveis. Colunas ocultas, `aggregate` ou de outros tipos nunca são lidas, e passar uma coluna para `aggregate` apaga os valores guardados. Com até `CATALOG_OBSERVED_VALUES_MAX` valores distintos (nulos não contam), a lista fica em `observed_values`; acima disso, a coluna é texto livre e o campo fica nulo. Esses valores funcionam como os de enum: o contexto do modelo lista os da origem, e valores do YAML que não existem nos dados viram `obsolete_values` e saem do contexto. Eles não entram na impressão digital, porque mudança de dados não é defasagem. Se a leitura de uma coluna falhar, ela mantém os valores anteriores.
+
+**Valores no contexto.** Nem todo valor lido vai para o prompt. Cada coluna tem o campo editorial `list_values`: `always` (sempre lista), `never` (nunca lista) ou `auto` (padrão). Em `auto`, a coluna lista os valores quando tem enum, quando algum valor tem descrição editorial ou quando os valores observados parecem uma categoria: coluna não pesquisável, com até `CATALOG_CONTEXT_VALUES_MAX` valores (padrão 20) e valores de até 30 caracteres em média. ORCID, nomes, títulos, datas e indicadores numéricos guardados como texto ficam de fora, e os seeds os marcam como `never`. Os valores lidos continuam guardados e aparecem na demo para revisão. No prompt, o rótulo é só "Valores:"; a regra de usar os valores exatamente como estão fica uma vez nas regras da Maria, que também mandam conferir com `SELECT DISTINCT` antes de filtrar por valor exato uma coluna sem valores listados.
+
+**Relacionamentos no contexto.** Cada relacionamento ligado aparece na linha da coluna de origem (`` - `researcher_id` (UUID): Pesquisador autor. → public.researcher.id ``), e só quando as duas entidades e as colunas das duas pontas estão visíveis.
 
 **Exemplos few-shot.** Cada fonte pode ter exemplos de pergunta e SQL (`examples` no YAML ou na API), que entram no contexto do modelo. Antes disso, cada exemplo passa pelas mesmas regras de `query_data` (entidades, colunas e funções permitidas). Um exemplo que cita uma coluna inexistente ou oculta fica fora do contexto, e a prévia (`GET .../context`) o lista em `rejected_examples`, com o motivo.
 

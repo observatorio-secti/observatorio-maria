@@ -1,5 +1,8 @@
 import os
 
+import pytest
+from pydantic import ValidationError
+
 from observatorio_maria.settings import Settings
 
 
@@ -29,3 +32,8 @@ def test_export_environment_exports_extra_dotenv_variables(
     # Campos do Settings não são exportados.
     assert 'QUERY_MAX_ROWS' not in os.environ
     monkeypatch.delenv('TEST_EXPORT_SOURCE_URL')
+
+
+def test_context_values_max_must_be_positive():
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, CATALOG_CONTEXT_VALUES_MAX=0)
