@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager, suppress
 from http import HTTPStatus
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,9 +16,8 @@ from observatorio_maria.routers import catalog, conversations, health
 from observatorio_maria.schemas import Message
 from observatorio_maria.settings import Settings
 
-# Exporta o .env para os.environ: os SDKs dos provedores de LLM leem suas
-# credenciais (ex.: OPENAI_API_KEY) diretamente do ambiente.
-load_dotenv()
+# Os SDKs dos provedores de LLM e as fontes do catálogo leem o ambiente.
+Settings().export_environment()
 
 
 @asynccontextmanager

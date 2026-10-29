@@ -61,3 +61,6 @@ htmlcov/
 *.swp
 *.swo
 *~
+
+# Relatórios do task eval
+evals/results/

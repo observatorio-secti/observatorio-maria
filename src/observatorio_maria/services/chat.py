@@ -51,7 +51,7 @@ from observatorio_maria.query.execution import (
     ResultStore,
     sanitize_purpose,
 )
-from observatorio_maria.query.tool import QueryRunner
+from observatorio_maria.query.tool import QueryObserver, QueryRunner
 from observatorio_maria.schemas import TextBlock
 from observatorio_maria.settings import Settings
 
@@ -274,6 +274,7 @@ class ChatService:
         callbacks: list[BaseCallbackHandler],
         settings: Settings | None = None,
         agent_metrics: AgentMetrics | None = None,
+        query_observer: QueryObserver | None = None,
     ):
         self.session = session
         self.registry = registry
@@ -281,6 +282,8 @@ class ChatService:
         self.callbacks = callbacks
         self.settings = settings or Settings()
         self.agent_metrics = agent_metrics or get_agent_metrics()
+        # Usado pela avaliação com perguntas de referência; a API não o usa.
+        self.query_observer = query_observer
 
     async def check_conversation_limits(
         self, conversation: Conversation
@@ -353,6 +356,7 @@ class ChatService:
             timeout_seconds=self.settings.QUERY_TIMEOUT_SECONDS,
             max_cost=self.settings.QUERY_MAX_ESTIMATED_COST,
             max_per_call=self.settings.QUERY_MAX_PER_CALL,
+            query_observer=self.query_observer,
         )
         query_tools = query_runner.build_query_tools() if has_sources else []
         presentation_tools = (

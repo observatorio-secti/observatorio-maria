@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 from pydantic import Field
@@ -11,7 +12,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file='.env',
         env_file_encoding='utf-8',
-        extra='ignore',
+        # Variáveis do .env que não são campos ficam em model_extra, com o
+        # nome original, para export_environment.
+        extra='allow',
+        case_sensitive=True,
     )
 
     DATABASE_URL: str = 'sqlite+aiosqlite:///./observatorio.db'
@@ -42,3 +46,14 @@ class Settings(BaseSettings):
     LLM_MEDIUM_MODEL_KWARGS: dict[str, Any] = DEFAULT_MODEL_KWARGS
     LLM_ADVANCED_MODEL: str = DEFAULT_MODEL
     LLM_ADVANCED_MODEL_KWARGS: dict[str, Any] = DEFAULT_MODEL_KWARGS
+
+    def export_environment(self) -> None:
+        """Exporta para os.environ as variáveis do .env que não são campos.
+
+        Os SDKs dos provedores de LLM (ex.: OPENAI_API_KEY), as URLs das
+        fontes do catálogo e o OpenTelemetry leem o ambiente diretamente.
+        Variáveis já definidas no ambiente têm prioridade sobre o .env.
+        """
+        for name, value in (self.model_extra or {}).items():
+            if isinstance(value, str):
+                os.environ.setdefault(name, value)

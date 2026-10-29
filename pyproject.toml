@@ -15,7 +15,6 @@ dependencies = [
     "langchain-openai>=1.7",
     "aiosqlite>=0.22",
     "alembic>=1.20",
-    "python-dotenv>=1.0",
     "opentelemetry-sdk>=1.45",
     "opentelemetry-exporter-otlp-proto-http>=1.45",
     "opentelemetry-instrumentation-fastapi>=0.66b1",
@@ -64,6 +63,7 @@ lint = 'ruff check . && ruff check . --diff'
 format = 'ruff check . --fix && ruff format .'
 run = 'fastapi dev src/observatorio_maria/app.py'
 seed = 'python -m observatorio_maria.catalog.seed catalog/*.yaml'
+eval = 'python -m observatorio_maria.evaluation'
 pre_test = 'task lint'
 test = 'pytest -s -x --cov=observatorio_maria -vv'
 post_test = 'coverage html'

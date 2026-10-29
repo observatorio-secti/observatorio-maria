@@ -1,6 +1,7 @@
 """Ferramentas LangChain para consulta e apresentação de dados."""
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.tools import StructuredTool
@@ -31,6 +32,19 @@ from observatorio_maria.query.validator import (
     source_dialect,
     validate_query,
 )
+
+
+@dataclass(frozen=True)
+class QueryObservation:
+    """Consulta feita pelo agente, para quem observa a resposta de fora."""
+
+    source: str
+    sql: str
+    row_count: int
+    error: str | None = None
+
+
+QueryObserver = Callable[[QueryObservation], None]
 
 EMPTY_RESULT_HINT = (
     'A consulta não trouxe dados (nenhuma linha ou só valores nulos). Se ela '
@@ -105,6 +119,7 @@ class QueryRunner:
         on_activity: ActivityCallback | None = None,
         calls_left: int = 0,
         engine_factory: Callable[[str], AsyncEngine] | None = None,
+        query_observer: QueryObserver | None = None,
     ):
         self.session = session
         self.result_store = result_store
@@ -115,6 +130,7 @@ class QueryRunner:
         self.on_activity = on_activity
         self.calls_left = calls_left
         self.engine_factory = engine_factory or create_readonly_engine
+        self.query_observer = query_observer
 
         self.queries_in_current_call: int = 0
         self.total_queries: int = 0
@@ -161,10 +177,26 @@ class QueryRunner:
             clean = sanitize_purpose(purpose, datasource.name)
             await self.on_activity(datasource.id, datasource.name, clean)
 
-    async def query_data(  # noqa: PLR0911
+    async def query_data(
         self, source: str, sql: str, purpose: str = ''
     ) -> dict[str, Any]:
-        """Executa a ferramenta query_data."""
+        """Executa a ferramenta query_data e avisa o observador, se houver."""
+        response = await self._run_query_data(source, sql, purpose)
+        if self.query_observer:
+            result = self.result_store.get(response.get('result_id', ''))
+            self.query_observer(
+                QueryObservation(
+                    source=source,
+                    sql=result.sql if result else sql,
+                    row_count=len(response.get('rows', [])),
+                    error=response.get('error'),
+                )
+            )
+        return response
+
+    async def _run_query_data(  # noqa: PLR0911
+        self, source: str, sql: str, purpose: str
+    ) -> dict[str, Any]:
         self.queries_in_current_call += 1
         self.total_queries += 1
 

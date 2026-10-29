@@ -23,12 +23,15 @@ from observatorio_maria.models import (
     CatalogColumn,
     CatalogDataSource,
     CatalogEntity,
+    Conversation,
     Message,
     MessageRole,
 )
+from observatorio_maria.observability.genai import get_tracer
 from observatorio_maria.query import execution as exec_module
 from observatorio_maria.query.errors import QueryCostExceededError
 from observatorio_maria.schemas import TextBlock
+from observatorio_maria.services.chat import ChatService
 from observatorio_maria.settings import Settings
 from tests.conftest import ScriptedToolChatModel
 
@@ -884,3 +887,62 @@ async def test_wrong_text_filter_is_corrected_within_default_budget(
     assert _last_call_warnings(model.recorded_calls[3]) == []
     text = res.json()['assistant_message']['content'][0]['text']
     assert text == 'O orçamento do projeto é 150.'
+
+
+@pytest.mark.asyncio
+async def test_query_observer_records_source_sql_and_errors(
+    session, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    conversation = Conversation()
+    session.add(conversation)
+    await session.commit()
+
+    turn1 = AIMessage(
+        content='',
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'SELECT nome FROM projetos WHERE ano = 2024',
+                    'purpose': 'Projetos de 2024',
+                },
+                'id': 'c1',
+            },
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'DELETE FROM projetos',
+                    'purpose': 'Inválida',
+                },
+                'id': 'c2',
+            },
+        ],
+    )
+    model = ScriptedToolChatModel(
+        responses=[turn1, AIMessage('Dois projetos.')]
+    )
+    registry = ModelRegistry([
+        RegisteredModel(tier, f'fake:{tier}', model) for tier in ModelTier
+    ])
+    observations = []
+    service = ChatService(
+        session,
+        registry,
+        get_tracer(),
+        [],
+        query_observer=observations.append,
+    )
+
+    _, assistant = await service.send_message(conversation, 'Projetos 2024')
+
+    assert assistant.content[0]['text'] == 'Dois projetos.'
+    first, second = observations
+    assert first.source == 'fomento'
+    assert '"ano" = 2024' in first.sql
+    assert first.row_count == 2  # noqa: PLR2004
+    assert first.error is None
+    assert second.error
+    assert second.row_count == 0

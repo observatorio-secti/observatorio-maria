@@ -70,6 +70,9 @@ catalog/            ← introspecção somente leitura → banco de origem (ex.:
 ├── catalog/                         # Seeds YAML do catálogo (um arquivo por fonte)
 │   ├── fomento.yaml
 │   └── simcc.yaml
+├── evals/
+│   ├── reference.yaml               # Perguntas de referência para `task eval`
+│   └── results/                     # Relatórios JSON das avaliações (fora do git)
 ├── observability/                   # Stack local de observabilidade (Docker Compose)
 │   ├── compose.yaml
 │   ├── otel-collector.yaml          # Roteamento: Tempo, Phoenix, Prometheus e Loki
@@ -93,6 +96,13 @@ catalog/            ← introspecção somente leitura → banco de origem (ex.:
 │   │   ├── registry.py              # ModelTier, ModelRegistry e get_model_registry
 │   │   └── prompts.py               # Prompt de sistema da Maria
 │   ├── services/chat.py             # ChatService (stream_message / send_message)
+│   ├── evaluation/                  # Comando `task eval` (avaliação com modelo real)
+│   │   ├── reference.py             # Formato e carregamento das perguntas de referência
+│   │   ├── checks.py                # Critérios numbers, list e sources
+│   │   ├── judge.py                 # Critério judge (modelo-juiz)
+│   │   ├── runner.py                # Execução pelo ChatService numa cópia do banco
+│   │   ├── verify.py                # Conferência das respostas esperadas (--check-expected)
+│   │   └── report.py                # Relatório no terminal e em JSON
 │   ├── routers/
 │   │   ├── health.py                # /health
 │   │   ├── conversations.py         # /conversations, mensagens e streaming
@@ -176,7 +186,7 @@ Antes de subir, crie os usuários somente leitura nos bancos do fomento e do Sim
 
 ## ⚙️ Configuração
 
-As variáveis são lidas do ambiente e do `.env`.
+As variáveis são lidas do ambiente e do `.env` pelo `Settings` (pydantic-settings), e o ambiente tem prioridade. As variáveis do `.env` que não são campos do `Settings`, como as credenciais dos provedores (`OPENAI_API_KEY`), as URLs das fontes (`*_DATABASE_URL`) e as do OpenTelemetry, são exportadas para o ambiente na inicialização da API e do `task eval`, porque esses componentes leem o ambiente diretamente.
 
 | Variável | Descrição | Padrão |
 |---|---|---|
@@ -478,6 +488,7 @@ Para desligar a demo, use `DEMO_ENABLED=false`. Ela carrega Chart.js, marked e D
 | `task test` | Lint + testes com cobertura (gera `htmlcov/`) |
 | `task lint` | Ruff (estilo e boas práticas) |
 | `task format` | Corrige e formata o código |
+| `task eval` | Avalia a Maria com o **modelo real** contra `evals/reference.yaml` (veja abaixo) |
 
 - **Assíncronos:** `pytest-asyncio` e `httpx.AsyncClient` com `ASGITransport`, sobre SQLite em memória recriado a cada teste.
 - **Sem chamadas a LLMs reais:** o `ModelRegistry` é substituído por fakes do LangChain:
@@ -488,6 +499,32 @@ Para desligar a demo, use `DEMO_ENABLED=false`. Ela carrega Chart.js, marked e D
   Um callback de gravação confere as mensagens enviadas ao modelo.
 - **Catálogo contra um banco real:** os testes sincronizam com um SQLite de origem em arquivo temporário (tabelas, view e chaves estrangeiras), inclusive tabelas e colunas que somem e voltam. Os testes de defasagem alteram essa origem e conferem que o diff bate com o relatório da sincronização seguinte. Os enums, que o SQLite não tem, são testados com snapshots montados à mão.
 - **Telemetria em memória:** a suíte roda com `OTEL_SDK_DISABLED=true`, e os testes de observabilidade usam `InMemorySpanExporter`, `InMemoryMetricReader` e `InMemoryLogRecordExporter`.
+
+### Avaliação com modelo real (`task eval`)
+
+Os testes nunca chamam LLMs, então não medem se o modelo escolhe a fonte, a tabela e o filtro certos. O `task eval` mede isso: envia as perguntas de `evals/reference.yaml` à Maria, pelo mesmo `ChatService` da API, com os modelos e as fontes do `.env`, e confere cada resposta. Serve de linha de base antes e depois de mudanças no contexto enviado ao modelo.
+
+```bash
+poetry run task eval                                   # todas as perguntas, uma vez
+poetry run task eval -- --tag entre-fontes --repeat 3  # um subconjunto, três vezes
+poetry run task eval -- --question artigos-por-ano     # uma pergunta (repetível)
+poetry run task eval -- --check-expected               # confere as respostas esperadas, sem modelo
+```
+
+Cada pergunta do arquivo tem `id`, `question`, `tags`, critérios (`checks`) e consultas de conferência (`verify`):
+
+| Critério | Passa quando |
+|---|---|
+| `numbers` | todos os `values` aparecem no texto, nas tabelas ou nos gráficos da resposta (aceita "3.653" e "1.234,5") |
+| `list` | a fração `min_ratio` (padrão 1) dos `items` aparece na resposta, sem diferença de maiúsculas, acentos e espaços |
+| `sources` | as consultas sem erro incluem todas as fontes `required` e nenhuma `forbidden` |
+| `judge` | o modelo do nível `advanced` julga que a resposta atende ao `criterion` (só para critérios textuais) |
+
+- **Resultado:** a pergunta acerta só se todos os critérios passam. Falha do modelo conta como erro e não interrompe as demais. O terminal mostra acertos por pergunta, tokens, chamadas ao modelo, consultas e fontes; o JSON completo (modelos, respostas e SQL) vai para `evals/results/`, fora do git.
+- **Banco da Maria intacto:** a avaliação roda numa cópia temporária do SQLite de `DATABASE_URL`, com o catálogo como está; nenhuma conversa de avaliação fica no banco nem na demo.
+- **Conferência:** `--check-expected` executa as etapas `verify` pelo validador e pela conexão somente leitura do agente, sem modelo, e aponta as respostas esperadas que não batem mais com os dados (código de saída 1). O arquivo nunca é reescrito. Numa etapa, `{previous}` vira a lista de valores da primeira coluna da etapa anterior e `{previous_count}`, o número de linhas dela; a última etapa é comparada pela coluna `column` (ou por todas, nos números).
+- **Tags:** cada pergunta tem a tag da categoria; `exemplo` marca as que repetem um exemplo few-shot do catálogo, e `issue-2` as de conceitos repetidos entre fontes, que falham até a política da issue #2 existir.
+- **Custo:** cada pergunta gasta de 30 a 50 mil tokens com as duas fontes, mais o juiz. Não roda no `task test` nem na CI.
 
 ---
 
