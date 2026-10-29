@@ -57,8 +57,9 @@ questions:
       - type: sources
         required: [fomento]
         forbidden: [simcc]
+      # Bolsa que termina no próprio dia não conta como ativa.
       - type: numbers
-        values: [393]
+        values: [387]
     verify:
       - source: fomento
         sql: >-
@@ -67,7 +68,7 @@ questions:
           WHERE i.sigla = 'UESC'
             AND b.status IN ('REGULAR', 'RESOLVIDA', 'PENDENTE_REVISAO')
             AND b.quando_iniciou <= '2026-06-30'
-            AND (b.quando_terminou IS NULL OR b.quando_terminou >= '2026-06-30')
+            AND (b.quando_terminou IS NULL OR b.quando_terminou > '2026-06-30')
 
   - id: bolsas-por-grande-area
     question: Como as bolsas se distribuem por grande área do conhecimento?

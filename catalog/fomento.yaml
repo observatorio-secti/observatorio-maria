@@ -21,7 +21,7 @@ datasource:
     - O banco contém dezenas de milhares de bolsas, projetos e pesquisadores. Para contagens e totais, prefira agregações (ex.: COUNT(DISTINCT ...), GROUP BY ou mv_bolsas_metricas).
     - Para contar bolsas, considere apenas status REGULAR, RESOLVIDA e PENDENTE_REVISAO; DESCARTADA nunca entra nas contagens. É o mesmo recorte do painel do módulo de fomento.
     - Para totais por ano, modalidade, instituição, cidade, território ou área, prefira `mv_bolsas_metricas` e some a coluna `quantidade` (não use COUNT(*) nela).
-    - Uma bolsa está ativa numa data se começou até ela e `quando_terminou` é nula ou posterior.
+    - Uma bolsa está ativa numa data se começou até ela e `quando_terminou` é nula ou posterior a ela (`quando_terminou > data`). Uma bolsa que termina no próprio dia não conta como ativa nele.
     - Áreas do conhecimento formam uma árvore (grande área > área > subárea); um projeto pode apontar para qualquer nível.
     - Alguns campos podem não estar preenchidos na origem, como nome, cidade e território do pesquisador e a subárea. Se uma consulta por eles vier vazia ou só com nulos, confira com COUNT(coluna) e diga ao usuário que o dado não está disponível na base, sem inventar.
     - O identificador Lattes em `pesquisadores.lattes` indica se o pesquisador está identificado no Simcc. Quando `lattes` for nulo, o pesquisador não está presente no Simcc. Ao responder sobre presença no Simcc ou dados relacionados (como artigos), considere essa distinção.
@@ -29,7 +29,7 @@ datasource:
   examples:
     - question: "Quantas bolsas estavam ativas em 1º de janeiro de 2025?"
       sql: >-
-        SELECT COUNT(*) FROM public.bolsas WHERE status IN ('REGULAR', 'RESOLVIDA', 'PENDENTE_REVISAO') AND quando_iniciou <= '2025-01-01' AND (quando_terminou IS NULL OR quando_terminou >= '2025-01-01')
+        SELECT COUNT(*) FROM public.bolsas WHERE status IN ('REGULAR', 'RESOLVIDA', 'PENDENTE_REVISAO') AND quando_iniciou <= '2025-01-01' AND (quando_terminou IS NULL OR quando_terminou > '2025-01-01')
     - question: "Total de bolsas por ano a partir de 2020"
       sql: >-
         SELECT ano_inicio, SUM(quantidade) AS total FROM public.mv_bolsas_metricas WHERE ano_inicio >= 2020 GROUP BY ano_inicio ORDER BY ano_inicio
