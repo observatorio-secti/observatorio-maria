@@ -1,6 +1,7 @@
 """Validação determinística de consultas SQL contra o catálogo de dados."""
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -276,8 +277,9 @@ def _is_inside_aggregate(col: exp.Column, top_expr: exp.Expression) -> bool:
 
 def _check_aggregate_columns(
     qualified: exp.Expression,
-    schema: QuerySchema,
+    schema: Any,
     sources: dict[str, Any],
+    table_key: Callable[[exp.Table], str] = lambda table: table.name.lower(),
 ) -> None:
     for select in qualified.find_all(exp.Select):
         for expr in select.expressions:
@@ -289,7 +291,7 @@ def _check_aggregate_columns(
                 if col.table:
                     src = sources.get(col.table)
                     if isinstance(src, exp.Table):
-                        table_name = src.name.lower()
+                        table_name = table_key(src)
                     elif col.table.lower() in schema.queryable_tables:
                         table_name = col.table.lower()
 

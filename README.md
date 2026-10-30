@@ -207,6 +207,9 @@ As variáveis são lidas do ambiente e do `.env` pelo `Settings` (pydantic-setti
 | `QUERY_TIMEOUT_SECONDS` | Limite de tempo de execução por consulta na origem | `15` |
 | `QUERY_MAX_PER_CALL` | Máximo de consultas SQL executadas por chamada do modelo | `4` |
 | `QUERY_MAX_ESTIMATED_COST` | Custo estimado máximo de consulta via EXPLAIN no PostgreSQL (0 desliga) | `50000` |
+| `QUERY_FEDERATED_MEMORY_LIMIT` | Memória de cada consulta entre fontes | `512MB` |
+| `QUERY_FEDERATED_THREADS` | Threads de cada consulta entre fontes | `2` |
+| `QUERY_FEDERATED_MAX_CONCURRENT` | Consultas entre fontes ao mesmo tempo; as demais esperam, dentro do tempo limite | `2` |
 | `MARIA_AGENT_MAX_MODEL_CALLS` | Orçamento máximo de chamadas ao modelo por resposta da Maria | `6` |
 | `CONVERSATION_MAX_QUESTIONS` | Perguntas por conversa. Na seguinte, a API responde 429 e orienta a iniciar uma nova conversa. `0` desliga | `10` |
 | `CONVERSATION_TOKEN_CEILING` | Teto opcional de tokens acumulados por conversa, como trava de custo. `0` desliga | `0` |
@@ -316,7 +319,7 @@ Há duas fontes:
 
 **Simcc.** As tabelas base do Simcc têm uma linha por pesquisador autor e servem para perguntas sobre pesquisadores. As views `mv_canonical_*` têm uma linha por produção, sem repetir coautores, e servem para totais. As instruções da fonte explicam isso ao modelo. Arrays, JSON, `tsvector` e campos internos do ETL do Simcc ficam ocultos. Nome, ORCID e resumo do currículo têm acesso `full`, por decisão do projeto: a Maria pode citar pesquisadores, inclusive ao relacionar com bolsistas do fomento. Para mudar isso, passe as colunas para `aggregate` ou oculte-as pela API ou pela demo. Um pesquisador pode ter várias instituições, ligadas por `researcher_institution`; o antigo `researcher.institution_id` fica fora do contexto, e as instruções orientam `COUNT(DISTINCT ...)` ao contar pesquisadores por instituição.
 
-**Fomento × Simcc.** `pesquisadores.lattes` (fomento) e `researcher.lattes_id` (Simcc) são o mesmo identificador, mas cada consulta acessa uma só fonte. As instruções orientam o modelo a consultar uma fonte e filtrar a outra com até 100 Lattes por vez (o teto de linhas de `QUERY_MAX_ROWS`), informando quantos foram encontrados. Agregações sobre grupos maiores ainda não são possíveis. Se `QUERY_MAX_ROWS` mudar, ajuste o número nas instruções do `catalog/simcc.yaml` ou pela API.
+**Fomento × Simcc.** `pesquisadores.lattes` (fomento) e `researcher.lattes_id` (Simcc) são o mesmo identificador. A ferramenta `query_across_sources` junta as duas fontes numa consulta só, com tabelas no formato `fonte.schema.tabela`, e roda num DuckDB em memória criado para cada consulta. As regras são as de `query_data`, e as fontes só se juntam por **ligações** declaradas no catálogo: cruzar instituições por nome, por exemplo, é recusado. Com a ligação, o resultado traz `coverage`, com quantas chaves a fonte de origem tem e quantas foram encontradas na outra, e o modelo é orientado a informar esses números. Consultas de uma fonte só seguem o caminho de sempre.
 
 **Conceitos em várias fontes.** O mesmo nome aparece nas duas fontes com significados diferentes: projetos com bolsa (fomento) e projetos do currículo Lattes (Simcc); instituições das bolsas e afiliações dos pesquisadores; bolsistas e pesquisadores com currículo. Um **conceito** reúne as entidades de cada fonte e guarda a **política de resposta**: o que o conceito é em cada fonte, qual responde pelo sentido da pergunta e, sem sentido definido, qual é a padrão, dizendo a origem do número e mencionando a outra fonte numa frase, nunca somando as duas. O prompt recebe a seção "Conceitos em várias fontes" antes das fontes, só com conceitos que têm entidades visíveis em pelo menos duas fontes incluídas, e cada entidade vinculada indica o conceito no contexto da sua fonte. Conceitos são dado editorial: a sincronização nunca os altera, e excluir um conceito só desvincula as entidades. `catalog/concepts.yaml` traz `projetos`, `instituicoes` e `pesquisadores`, com as entidades no formato `fonte:schema.entidade`.
 
@@ -327,6 +330,7 @@ Há duas fontes:
 | **Coluna** | Rótulo, descrição, sinônimos, valores conhecidos com significado, **visível**, **pesquisável** (habilita busca textual via `MATCH_TEXT`), **listar valores** no contexto (`auto`, `always` ou `never`) e **acesso**: `full` (pode ler valores) ou `aggregate` (só filtrar, agrupar e contar; para dados pessoais) |
 | **Relacionamento** | Liga/desliga e descrição. Vêm das chaves estrangeiras ou, quando não há chave (views), do YAML |
 | **Conceito** | Identificador (slug, imutável), rótulo, descrição, sinônimos e política de resposta. Cada entidade aponta para no máximo um conceito |
+| **Ligação entre fontes** | Par de colunas equivalentes em duas fontes, com descrição e liga/desliga. Só vale com as duas colunas visíveis e presentes |
 
 **Dados técnicos e editoriais.** A sincronização só atualiza tipo, chaves, ordem e presença. Rótulos, descrições e interruptores vêm de pessoas e nunca são sobrescritos. O que é novo na origem entra **oculto**; o que sumiu fica **ausente**, com a configuração guardada, e volta se reaparecer.
 
@@ -380,7 +384,9 @@ Com `auto_sync` ligado na fonte (API, YAML ou demo), uma defasagem é sincroniza
 | POST | `/catalog/concepts` | Cria um conceito (`id` em slug; 409 se já existir) |
 | GET · PATCH · DELETE | `/catalog/concepts/{id}` | Detalha, edita ou exclui um conceito (as entidades ficam sem conceito) |
 | GET | `/catalog/concepts/context` | Seção "Conceitos em várias fontes" que o modelo receberá |
-| GET | `/catalog/concepts/export` | Conceitos e vínculos em YAML, no formato do seed |
+| GET | `/catalog/concepts/export` | Conceitos, vínculos e ligações em YAML, no formato do seed |
+| GET · POST | `/catalog/links` | Lista ou cria ligações entre fontes (422 se a coluna não existir ou for da mesma fonte; 409 se repetida) |
+| PATCH · DELETE | `/catalog/links/{id}` | Liga, desliga, descreve ou exclui uma ligação |
 
 Na sincronização, 422 indica a variável de conexão não definida e 502 indica origem inacessível ou URL inválida. Nos dois casos o catálogo não muda, e as mensagens de erro nunca repetem a URL.
 
@@ -414,6 +420,7 @@ A Maria implementa múltiplas camadas de proteção para salvaguardar dados de c
 
 3. **Limites de Recursos e Proteção contra DoS:**
    - **Dry-run com EXPLAIN:** Antes da execução no PostgreSQL, um dry-run via `EXPLAIN (FORMAT JSON)` inspeciona o custo estimado (`Total Cost`). Se ultrapassar `QUERY_MAX_ESTIMATED_COST`, a consulta é barrada preventivamente sem tocar nos dados, devolvendo mensagem orientativa para a Maria refinar os filtros.
+   - **Consultas entre fontes:** sem `EXPLAIN` prévio, a proteção vem do `statement_timeout` em cada conexão com as origens, da interrupção do DuckDB em `QUERY_TIMEOUT_SECONDS` e dos limites `QUERY_FEDERATED_MEMORY_LIMIT`, `QUERY_FEDERATED_THREADS` e `QUERY_FEDERATED_MAX_CONCURRENT`. Depois de anexar as origens em `READ_ONLY`, o acesso externo é desligado e a configuração é travada.
    - **Truncamento defensivo por célula:** Textos de células longas são limitados a 2.000 caracteres, prevenindo esgotamento intencional da janela de contexto (*Context Flooding*).
    - **Limites de execução:** Teto máximo de linhas por consulta (`QUERY_MAX_ROWS`), timeout de banco (`QUERY_TIMEOUT_SECONDS`), máximo de consultas SQL por chamada (`QUERY_MAX_PER_CALL`) e orçamento de chamadas ao modelo (`MARIA_AGENT_MAX_MODEL_CALLS`).
    - **Limite de perguntas por conversa:** Depois de `CONVERSATION_MAX_QUESTIONS` perguntas (padrão 10), a conversa recusa novas mensagens com HTTP 429 e orienta a iniciar outra. O limite não depende do tamanho do contexto das fontes, que com fomento e Simcc leva cada resposta a gastar de 27 a 50 mil tokens.
@@ -504,6 +511,7 @@ Para desligar a demo, use `DEMO_ENABLED=false`. Ela carrega Chart.js, marked e D
 | `task test` | Lint + testes com cobertura (gera `htmlcov/`) |
 | `task lint` | Ruff (estilo e boas práticas) |
 | `task format` | Corrige e formata o código |
+| `task duckdb-extensions` | Instala as extensões `postgres` e `sqlite` do DuckDB, usadas nas consultas entre fontes e nos testes |
 | `task eval` | Avalia a Maria com o **modelo real** contra `evals/reference.yaml` (veja abaixo) |
 
 - **Assíncronos:** `pytest-asyncio` e `httpx.AsyncClient` com `ASGITransport`, sobre SQLite em memória recriado a cada teste.
@@ -538,6 +546,7 @@ Cada pergunta do arquivo tem `id`, `question`, `tags`, critérios (`checks`) e c
 
 - **Resultado:** a pergunta acerta só se todos os critérios passam. Falha do modelo conta como erro e não interrompe as demais. O terminal mostra acertos por pergunta, tokens, chamadas ao modelo, consultas e fontes; o JSON completo (modelos, respostas e SQL) vai para `evals/results/`, fora do git.
 - **Banco da Maria intacto:** a avaliação roda numa cópia temporária do SQLite de `DATABASE_URL`, com o catálogo como está; nenhuma conversa de avaliação fica no banco nem na demo.
+- **Entre fontes:** uma etapa com `source: federated` é uma consulta entre fontes, e a cobertura devolvida (`keys` e `found`) também conta como número esperado.
 - **Conferência:** `--check-expected` executa as etapas `verify` pelo validador e pela conexão somente leitura do agente, sem modelo, e aponta as respostas esperadas que não batem mais com os dados (código de saída 1). O arquivo nunca é reescrito. Numa etapa, `{previous}` vira a lista de valores da primeira coluna da etapa anterior e `{previous_count}`, o número de linhas dela; a última etapa é comparada pela coluna `column` (ou por todas, nos números).
 - **Tags:** cada pergunta tem a tag da categoria; `exemplo` marca as que repetem um exemplo few-shot do catálogo, e `issue-2` as de conceitos repetidos entre fontes, que falham até a política da issue #2 existir.
 - **Custo:** cada pergunta gasta de 30 a 50 mil tokens com as duas fontes, mais o juiz. Não roda no `task test` nem na CI.

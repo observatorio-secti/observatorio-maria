@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from observatorio_maria.catalog.links import load_links
 from observatorio_maria.catalog.sync import (
     load_entities,
     load_relationships,
@@ -24,6 +25,7 @@ from observatorio_maria.models import (
     CatalogDataSource,
     CatalogEntity,
     CatalogRelationship,
+    CatalogSourceLink,
     ColumnAccess,
     RelationshipOrigin,
     ValueListing,
@@ -35,9 +37,13 @@ ENV_PATTERN = r'^[A-Z_][A-Z0-9_]{0,99}$'
 # Entidade de um conceito: `fonte:schema.entidade`.
 ENTITY_REF_PATTERN = r'^[a-z][a-z0-9_-]{0,63}:[^.:\s]+\.[^.:\s]+$'
 
+# Coluna de uma ligação entre fontes: `fonte:schema.entidade.coluna`.
+COLUMN_REF_PATTERN = r'^[a-z][a-z0-9_-]{0,63}:[^.:\s]+\.[^.:\s]+\.[^.:\s]+$'
+
 Slug = Annotated[str, Field(pattern=SLUG_PATTERN)]
 EnvName = Annotated[str, Field(pattern=ENV_PATTERN)]
 EntityRef = Annotated[str, Field(pattern=ENTITY_REF_PATTERN)]
+ColumnRef = Annotated[str, Field(pattern=COLUMN_REF_PATTERN)]
 
 
 class CatalogFileError(ValueError):
@@ -138,12 +144,24 @@ class ConceptDoc(BaseModel):
     entities: list[EntityRef] = []
 
 
+class SourceLinkDoc(BaseModel):
+    """Ligação entre fontes; `from` é a fonte de origem da cobertura."""
+
+    model_config = ConfigDict(extra='forbid', populate_by_name=True)
+
+    from_: ColumnRef = Field(alias='from')
+    to: ColumnRef
+    description: str | None = None
+    enabled: bool = True
+
+
 class ConceptsFile(BaseModel):
-    """Arquivo de conceitos: assuntos que aparecem em mais de uma fonte."""
+    """Arquivo de conceitos e ligações: o que envolve mais de uma fonte."""
 
     model_config = ConfigDict(extra='forbid')
 
     concepts: list[ConceptDoc]
+    links: list[SourceLinkDoc] = []
 
     @model_validator(mode='after')
     def unique_ids(self) -> Self:
@@ -166,6 +184,7 @@ class SeedReport:
 class ConceptSeedReport:
     created: int = 0
     linked: int = 0
+    links: int = 0
     # Entidades citadas no arquivo que não estão no catálogo.
     missing: list[str] = field(default_factory=list)
 
@@ -202,7 +221,9 @@ _Dumper.add_representer(str, _represent_str)
 
 
 def dump_concepts_file(document: ConceptsFile) -> str:
-    data = document.model_dump(mode='json', exclude_defaults=True)
+    data = document.model_dump(
+        mode='json', by_alias=True, exclude_defaults=True
+    )
     return yaml.dump(
         data, Dumper=_Dumper, allow_unicode=True, sort_keys=False, width=88
     )
@@ -482,8 +503,46 @@ async def seed_concepts(
             elif entity.concept_id is None:
                 entity.concept_id = doc.id
                 report.linked += 1
+    for doc in document.links:
+        await _seed_link(session, doc, report, reset=reset)
     await session.commit()
     return report
+
+
+async def _seed_link(session, doc, report, *, reset):
+    ends = []
+    for ref in (doc.from_, doc.to):
+        entity_ref, column = ref.rsplit('.', 1)
+        entity = await _find_entity(session, entity_ref)
+        if entity is None or not any(c.name == column for c in entity.columns):
+            report.missing.append(ref)
+            return
+        ends.append((entity, column))
+    (source, from_column), (target, to_column) = ends
+    existing = await session.scalar(
+        select(CatalogSourceLink).where(
+            CatalogSourceLink.from_entity_id == source.id,
+            CatalogSourceLink.from_column == from_column,
+            CatalogSourceLink.to_entity_id == target.id,
+            CatalogSourceLink.to_column == to_column,
+        )
+    )
+    if existing is not None and not reset:
+        return
+    if existing is not None:
+        await session.delete(existing)
+        await session.flush()
+    session.add(
+        CatalogSourceLink(
+            from_entity_id=source.id,
+            from_column=from_column,
+            to_entity_id=target.id,
+            to_column=to_column,
+            description=doc.description,
+            enabled=doc.enabled,
+        )
+    )
+    report.links += 1
 
 
 async def export_concepts(session: AsyncSession) -> ConceptsFile:
@@ -515,5 +574,14 @@ async def export_concepts(session: AsyncSession) -> ConceptsFile:
                 entities=refs.get(concept.id, []),
             )
             for concept in concepts
-        ]
+        ],
+        links=[
+            SourceLinkDoc(
+                from_=f'{r.from_datasource_id}:{r.from_entity}.{r.from_column}',
+                to=f'{r.to_datasource_id}:{r.to_entity}.{r.to_column}',
+                description=r.description,
+                enabled=r.enabled,
+            )
+            for r in await load_links(session)
+        ],
     )

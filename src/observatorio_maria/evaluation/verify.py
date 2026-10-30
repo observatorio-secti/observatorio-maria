@@ -26,6 +26,9 @@ from observatorio_maria.settings import Settings
 
 ExpectedStatus = Literal['ok', 'divergent', 'error', 'skipped']
 
+# Fonte de uma etapa de conferência que é consulta entre fontes.
+FEDERATED_SOURCE = 'federated'
+
 # Quantos valores atuais mostrar quando a resposta esperada diverge.
 MAX_SHOWN_VALUES = 20
 
@@ -76,7 +79,10 @@ def _show(values: list[str]) -> str:
 
 
 def compare_result(
-    question: ReferenceQuestion, result: QueryResult, column: str | None
+    question: ReferenceQuestion,
+    result: QueryResult,
+    column: str | None,
+    coverage: dict[str, Any] | None = None,
 ) -> ExpectedCheck:
     """Compara a última etapa com os critérios `numbers` e `list`."""
     if column and column not in result.columns:
@@ -96,6 +102,9 @@ def compare_result(
                     if column
                     else [cell for row in result.rows for cell in row]
                 )
+                # A cobertura também é resposta esperada ("2 de 20").
+                if coverage and coverage.get('available'):
+                    cells = [*cells, coverage['keys'], coverage['found']]
                 actual = _numbers_in(cells)
                 missing = [v for v in check.values if v not in actual]
                 if missing:
@@ -142,18 +151,25 @@ async def verify_question(
         )
     previous: list[Any] = []
     result: QueryResult | None = None
+    coverage: dict[str, Any] | None = None
     for number, step in enumerate(question.verify, start=1):
         sql = step.sql.replace('{previous}', sql_literals(previous)).replace(
             '{previous_count}', str(len(previous))
         )
-        response = await runner.query_data(step.source, sql)
+        if step.source == FEDERATED_SOURCE:
+            response = await runner.query_across_sources(sql)
+        else:
+            response = await runner.query_data(step.source, sql)
         if 'error' in response:
             return ExpectedCheck(
                 question.id, 'error', [f'Etapa {number}: {response["error"]}']
             )
         result = store.get(response['result_id'])
+        coverage = response.get('coverage')
         previous = [row[0] for row in result.rows]
-    return compare_result(question, result, question.verify[-1].column)
+    return compare_result(
+        question, result, question.verify[-1].column, coverage
+    )
 
 
 async def check_expected(

@@ -308,11 +308,11 @@ async def test_simcc_instructions_in_context(session):
     assert 'mv_canonical_*' in text
     assert 'para totais de produções' in text.lower()
     assert '`year_`' in text
-    # Ligação com o fomento e cobertura.
+    # Ligação com o fomento, sem limite de Lattes por consulta.
     assert '`researcher.lattes_id`' in text
     assert '`pesquisadores.lattes`' in text
-    assert 'no máximo 100 por consulta' in text
-    assert 'quantos dos Lattes consultados foram encontrados' in text
+    assert 'consulta entre fontes' in text
+    assert '100' not in text.split('## Instruções')[1].split('## Entidades')[0]
 
 
 async def test_fomento_instructions_point_to_simcc(session):

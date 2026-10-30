@@ -30,8 +30,7 @@ datasource:
     - `bibliographic_production` guarda artigos, livros, capítulos e trabalhos em eventos; o tipo está em `type`, e os detalhes ficam em `bibliographic_production_article`, `bibliographic_production_book` e `bibliographic_production_book_chapter`, ligadas por `bibliographic_production_id`. O ano está em `year_` (número).
     - Um pesquisador pode ter várias instituições, ligadas por `researcher_institution` (`researcher_id`, `institution_id`). Para pesquisadores por instituição, junte `researcher`, `researcher_institution` e `institution` e conte com `COUNT(DISTINCT r.id)`; somar instituições pode contar o mesmo pesquisador mais de uma vez. Não há correspondência entre `institution` e as instituições do fomento.
     - `researcher_production` tem as contagens de produção de cada pesquisador, prontas para rankings.
-    - Ligação com o fomento: `researcher.lattes_id` é o mesmo identificador de `pesquisadores.lattes` na fonte `fomento`. Cada consulta acessa uma só fonte. Para relacionar as duas, consulte uma delas e filtre a outra com os Lattes obtidos (`lattes_id IN (...)`), no máximo 100 por consulta.
-    - Nem todo bolsista do fomento está no Simcc: ao relacionar as fontes, diga quantos dos Lattes consultados foram encontrados. Perguntas que exigem agregar mais de 100 pesquisadores das duas fontes ainda não podem ser respondidas; diga isso ao usuário.
+    - Ligação com o fomento: `researcher.lattes_id` é o mesmo identificador de `pesquisadores.lattes` na fonte `fomento`. Para relacionar as duas fontes, use a consulta entre fontes, e não listas de Lattes copiadas de outra consulta.
   examples:
     - question: "Quantos artigos foram publicados por ano a partir de 2020?"
       sql: >-

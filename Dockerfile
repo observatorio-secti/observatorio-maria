@@ -27,6 +27,10 @@ RUN useradd --create-home --uid 1000 maria \
     && chown -R maria /app
 USER maria
 
+# Extensão das consultas entre fontes: instalada aqui porque a API não baixa
+# nada em execução.
+RUN python -c "import duckdb; duckdb.connect().install_extension('postgres')"
+
 EXPOSE 8000
 
 # Aplica as migrações antes de subir a API.

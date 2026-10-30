@@ -227,6 +227,20 @@
                   <span class="muted small" id="cat-concept-saved" aria-live="polite"></span>
                 </div>
               </form>
+              <h4>Ligações entre fontes</h4>
+              <p class="muted small">Colunas equivalentes em duas fontes. Consultas entre fontes só juntam por estas ligações; a cobertura é medida na primeira coluna.</p>
+              <ul class="concept-list" id="cat-links"></ul>
+              <form id="cat-link-form">
+                <div class="form-grid">
+                  <label class="field"><span>Coluna de origem <em class="muted">(fonte:schema.entidade.coluna)</em></span><input name="source" required placeholder="fomento:public.pesquisadores.lattes" /></label>
+                  <label class="field"><span>Coluna na outra fonte</span><input name="target" required placeholder="simcc:public.researcher.lattes_id" /></label>
+                  <label class="field wide"><span>Descrição</span><input name="description" /></label>
+                </div>
+                <div class="form-actions">
+                  <button class="ghost" type="submit">Criar ligação</button>
+                  <span class="muted small" id="cat-link-saved" aria-live="polite"></span>
+                </div>
+              </form>
               <h4>O que a Maria enxerga</h4>
               <pre class="context-preview" id="cat-concepts-context"></pre>
             </div>

@@ -28,6 +28,7 @@ from observatorio_maria.catalog.context import (
     load_concepts_context,
     render_context,
 )
+from observatorio_maria.catalog.links import load_links
 from observatorio_maria.catalog.sync import (
     load_entities,
     load_relationships,
@@ -55,6 +56,8 @@ from observatorio_maria.query.execution import (
     ResultStore,
     sanitize_purpose,
 )
+from observatorio_maria.query.federated_validator import cited_sources
+from observatorio_maria.query.federation import FederationLimits
 from observatorio_maria.query.tool import QueryObserver, QueryRunner
 from observatorio_maria.schemas import TextBlock
 from observatorio_maria.settings import Settings
@@ -62,6 +65,8 @@ from observatorio_maria.settings import Settings
 logger = logging.getLogger(__name__)
 
 AUTO_TITLE_MAX_LENGTH = 60
+
+QUERY_TOOLS = {'query_data', 'query_across_sources'}
 
 # Nível usado nas respostas do chat. Decisão interna: não é exposta nem
 # configurável por clientes da API.
@@ -370,8 +375,25 @@ class ChatService:
             max_cost=self.settings.QUERY_MAX_ESTIMATED_COST,
             max_per_call=self.settings.QUERY_MAX_PER_CALL,
             query_observer=self.query_observer,
+            federation_limits=FederationLimits(
+                max_rows=self.settings.QUERY_MAX_ROWS,
+                timeout_seconds=self.settings.QUERY_TIMEOUT_SECONDS,
+                memory_limit=self.settings.QUERY_FEDERATED_MEMORY_LIMIT,
+                threads=self.settings.QUERY_FEDERATED_THREADS,
+                max_concurrent=self.settings.QUERY_FEDERATED_MAX_CONCURRENT,
+            ),
         )
-        query_tools = query_runner.build_query_tools() if has_sources else []
+        ids = {ds.id for ds in consultable_sources}
+        across_sources = any(
+            link.active
+            and {link.from_datasource_id, link.to_datasource_id} <= ids
+            for link in await load_links(self.session)
+        )
+        query_tools = (
+            query_runner.build_query_tools(across_sources=across_sources)
+            if has_sources
+            else []
+        )
         presentation_tools = (
             query_runner.build_presentation_tools() if has_sources else []
         )
@@ -469,7 +491,7 @@ class ChatService:
                     break
 
                 has_query = any(
-                    tc.get('name') == 'query_data' for tc in tool_calls
+                    tc.get('name') in QUERY_TOOLS for tc in tool_calls
                 )
                 for tc in tool_calls:
                     tool_msg, activity = await self._execute_tool_call(
@@ -540,7 +562,7 @@ class ChatService:
         await self.session.commit()
         yield AssistantMessageCompleted(assistant_message)
 
-    async def _execute_tool_call(  # noqa: PLR0912
+    async def _execute_tool_call(  # noqa: PLR0912, PLR0914, PLR0915
         self,
         tc: dict[str, Any],
         query_runner: QueryRunner,
@@ -575,9 +597,19 @@ class ChatService:
                 None,
             )
 
-        source_id = tc_args.get('source', '')
-        ds = await query_runner._get_datasource(source_id)
-        source_name = ds.name if ds else source_id
+        across = tc_name == 'query_across_sources'
+        if across:
+            cited = cited_sources(tc_args.get('sql', ''))
+            found = [await query_runner._get_datasource(s) for s in cited]
+            source_id = '+'.join(cited)
+            source_name = ' e '.join(
+                ds.name if ds else s
+                for s, ds in zip(cited, found, strict=True)
+            )
+        else:
+            source_id = tc_args.get('source', '')
+            ds = await query_runner._get_datasource(source_id)
+            source_name = ds.name if ds else source_id
         purpose = sanitize_purpose(tc_args.get('purpose'), source_name)
         activity = Activity(
             kind='query', source=source_name, description=purpose
@@ -588,19 +620,25 @@ class ChatService:
             using_session(session_id),
         ):
             tool_span = self.tracer.start_span(
-                'query_data', openinference_span_kind='tool'
+                tc_name, openinference_span_kind='tool'
             )
-        tool_span.set_attribute(SpanAttributes.TOOL_NAME, 'query_data')
+        tool_span.set_attribute(SpanAttributes.TOOL_NAME, tc_name)
         tool_span.set_input(tc_args.get('sql', ''))
         tool_span.set_attribute('datasource.id', source_id)
 
         outcome = 'executed'
         try:
-            res = await query_runner.query_data(
-                source_id,
-                tc_args.get('sql', ''),
-                purpose=tc_args.get('purpose', ''),
-            )
+            if across:
+                res = await query_runner.query_across_sources(
+                    tc_args.get('sql', ''),
+                    purpose=tc_args.get('purpose', ''),
+                )
+            else:
+                res = await query_runner.query_data(
+                    source_id,
+                    tc_args.get('sql', ''),
+                    purpose=tc_args.get('purpose', ''),
+                )
             if 'error' in res:
                 err = res['error']
                 if 'Tempo limite' in err:

@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     QUERY_MAX_PER_CALL: int = Field(4, ge=1)
     QUERY_MAX_ESTIMATED_COST: float = Field(50_000.0, ge=0.0)
     MARIA_AGENT_MAX_MODEL_CALLS: int = Field(6, ge=1)
+    # Limites das consultas entre fontes (DuckDB em memória).
+    QUERY_FEDERATED_MEMORY_LIMIT: str = '512MB'
+    QUERY_FEDERATED_THREADS: int = Field(2, ge=1)
+    QUERY_FEDERATED_MAX_CONCURRENT: int = Field(2, ge=1)
 
     # Perguntas por conversa; 0 desliga o limite.
     CONVERSATION_MAX_QUESTIONS: int = Field(10, ge=0)

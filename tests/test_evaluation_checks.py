@@ -147,6 +147,18 @@ def test_failed_query_does_not_count_as_consulted():
     assert 'não consultou simcc' in result.detail
 
 
+def test_across_sources_query_counts_for_both_sources():
+    check = SourcesCheck(type='sources', required=['fomento', 'simcc'])
+    query = QueryObservation(
+        source='fomento+simcc',
+        sql='SELECT 1',
+        row_count=1,
+        sources=('fomento', 'simcc'),
+    )
+
+    assert check_sources(check, [query]).status == 'passed'
+
+
 class FakeJudgeModel:
     """Modelo-juiz falso com saída estruturada."""
 

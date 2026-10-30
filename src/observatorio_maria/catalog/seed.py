@@ -40,7 +40,8 @@ async def run(paths: list[Path], *, reset: bool) -> None:
             report = await seed_concepts(session, document, reset=reset)
             print(
                 f'{path}: {report.created} conceito(s) criado(s) e '
-                f'{report.linked} entidade(s) vinculada(s)'
+                f'{report.linked} entidade(s) vinculada(s) e '
+                f'{report.links} ligação(ões) criada(s)'
             )
             for ref in report.missing:
                 print(

@@ -657,6 +657,80 @@ async function deleteConcept(concept) {
   if (catalog.entity) await selectEntity(catalog.entity.id);
 }
 
+// --- Ligações entre fontes ----------------------------------------------------
+
+async function loadLinks() {
+  const data = await attempt(() => api('catalog/links'));
+  if (!data) return;
+  const items = data.links.map((link) => {
+    const li = el('li');
+    const head = el('div', { class: 'concept-head' });
+    head.append(
+      el('strong', { class: 'mono' }, `${link.from_datasource_id}.${link.from_entity}.${link.from_column}`),
+      el('span', {}, '='),
+      el('strong', { class: 'mono' }, `${link.to_datasource_id}.${link.to_entity}.${link.to_column}`)
+    );
+    const actions = el('div', { class: 'actions' });
+    actions.append(
+      switchInput(link.enabled, (checked) => patchLink(link.id, { enabled: checked }), {
+        label: `Ligada: ${link.from_column}`,
+      })
+    );
+    const remove = el('button', { class: 'ghost', type: 'button' }, 'Excluir');
+    remove.addEventListener('click', () => deleteLink(link));
+    actions.append(remove);
+    head.append(actions);
+    li.append(head);
+    if (link.enabled && !link.active) li.append(badge('coluna oculta ou ausente: não vale para consultas', 'warn'));
+    if (link.description) li.append(el('p', { class: 'muted small' }, link.description));
+    return li;
+  });
+  $('cat-links').replaceChildren(...(items.length ? items : [el('li', { class: 'muted' }, 'Nenhuma ligação.')]));
+}
+
+async function refreshLinks() {
+  await loadLinks();
+  await loadConceptsContext();
+}
+
+async function patchLink(id, changes) {
+  await attempt(() => api(`catalog/links/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }));
+  await refreshLinks();
+}
+
+async function deleteLink(link) {
+  if (!confirm(`Excluir a ligação ${link.from_column} = ${link.to_column}?`)) return;
+  await attempt(() => api(`catalog/links/${link.id}`, { method: 'DELETE' }));
+  await refreshLinks();
+}
+
+// `fonte:schema.entidade.coluna` nas pontas que a API espera.
+function linkEnd(text) {
+  const match = text.trim().match(/^([^:\s]+):([^.\s]+)\.([^.\s]+)\.([^.\s]+)$/);
+  if (!match) throw new Error(`Use o formato fonte:schema.entidade.coluna em "${text}"`);
+  const [, datasource_id, schema_name, entity, column] = match;
+  return { datasource_id, schema_name, entity, column };
+}
+
+async function createLink(event) {
+  event.preventDefault();
+  const form = event.target;
+  const saved = await attempt(() =>
+    api('catalog/links', {
+      method: 'POST',
+      body: JSON.stringify({
+        from: linkEnd(form.source.value),
+        to: linkEnd(form.target.value),
+        description: nullable(form.description.value),
+      }),
+    })
+  );
+  if (!saved) return;
+  form.reset();
+  flash('cat-link-saved');
+  await refreshLinks();
+}
+
 function showView(view) {
   catalog.view = view;
   document.querySelectorAll('.subtab').forEach((t) => t.classList.toggle('active', t.dataset.view === view));
@@ -668,7 +742,7 @@ async function refreshView() {
   if (catalog.view === 'context') await loadContext();
   if (catalog.view === 'concepts') {
     await loadConcepts();
-    await loadConceptsContext();
+    await refreshLinks();
   }
 }
 
@@ -711,6 +785,7 @@ entityForm.addEventListener('submit', async (event) => {
 $('cat-concept-new').addEventListener('click', () => editConcept(null));
 $('cat-concept-cancel').addEventListener('click', closeConceptForm);
 $('cat-concept-form').addEventListener('submit', saveConcept);
+$('cat-link-form').addEventListener('submit', createLink);
 
 $('view-source').addEventListener('submit', async (event) => {
   event.preventDefault();

@@ -56,7 +56,8 @@ class VerifyStep(_Strict):
     """Consulta de conferência que produziu a resposta esperada.
 
     No SQL, `{previous}` vira a lista de valores da primeira coluna da etapa
-    anterior e `{previous_count}`, o número de linhas dela.
+    anterior e `{previous_count}`, o número de linhas dela. Com `source` igual
+    a `federated`, a etapa é uma consulta entre fontes.
     """
 
     source: str

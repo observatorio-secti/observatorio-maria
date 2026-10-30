@@ -129,7 +129,12 @@ def check_list(check: ListCheck, texts: list[str]) -> CheckResult:
 def check_sources(
     check: SourcesCheck, queries: list[QueryObservation]
 ) -> CheckResult:
-    consulted = {q.source for q in queries if not q.error}
+    consulted = {
+        source
+        for q in queries
+        if not q.error
+        for source in (q.sources or (q.source,))
+    }
     missing = sorted(set(check.required) - consulted)
     forbidden = sorted(set(check.forbidden) & consulted)
     listed = ', '.join(sorted(consulted)) or 'nenhuma'

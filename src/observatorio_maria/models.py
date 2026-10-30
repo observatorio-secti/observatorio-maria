@@ -334,3 +334,32 @@ class CatalogRelationship:
     description: Mapped[str | None] = mapped_column(Text, default=None)
     enabled: Mapped[bool] = mapped_column(default=True)
     present: Mapped[bool] = mapped_column(default=True)
+
+
+@table_registry.mapped_as_dataclass(kw_only=True)
+class CatalogSourceLink:
+    """Colunas equivalentes em duas fontes (dado editorial).
+
+    A fonte de `from_entity` é a de origem da cobertura das consultas.
+    """
+
+    __tablename__ = 'catalog_source_links'
+    __table_args__ = (
+        UniqueConstraint(
+            'from_entity_id', 'from_column', 'to_entity_id', 'to_column'
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        init=False, primary_key=True, default_factory=uuid4
+    )
+    from_entity_id: Mapped[UUID] = mapped_column(
+        ForeignKey('catalog_entities.id', ondelete='CASCADE'), index=True
+    )
+    from_column: Mapped[str] = mapped_column(String(128))
+    to_entity_id: Mapped[UUID] = mapped_column(
+        ForeignKey('catalog_entities.id', ondelete='CASCADE'), index=True
+    )
+    to_column: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    enabled: Mapped[bool] = mapped_column(default=True)

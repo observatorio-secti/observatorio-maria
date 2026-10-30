@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from http import HTTPStatus
 from typing import Annotated
 from uuid import UUID
@@ -20,6 +21,12 @@ from observatorio_maria.catalog.introspection import (
     get_introspector,
     resolve_connection_url,
 )
+from observatorio_maria.catalog.links import (
+    find_entity,
+    has_column,
+    load_links,
+    resolve_link,
+)
 from observatorio_maria.catalog.observed import refresh_observed_values
 from observatorio_maria.catalog.sync import (
     load_entities,
@@ -39,6 +46,7 @@ from observatorio_maria.models import (
     CatalogDataSource,
     CatalogEntity,
     CatalogRelationship,
+    CatalogSourceLink,
     ColumnAccess,
 )
 from observatorio_maria.schemas import (
@@ -62,6 +70,10 @@ from observatorio_maria.schemas import (
     RelationshipList,
     RelationshipPublic,
     RelationshipUpdate,
+    SourceLinkCreate,
+    SourceLinkList,
+    SourceLinkPublic,
+    SourceLinkUpdate,
     SyncReportPublic,
 )
 from observatorio_maria.services.chat import (
@@ -485,6 +497,101 @@ async def delete_concept(concept: CurrentConcept, session: Session):
     ):
         entity.concept_id = None
     await session.delete(concept)
+    await session.commit()
+
+
+# --- Ligações entre fontes ---------------------------------------------------
+
+
+async def get_source_link(link_id: UUID, session: Session):
+    link = await session.get(CatalogSourceLink, link_id)
+    if not link:
+        raise not_found('Ligação não encontrada')
+    return link
+
+
+CurrentSourceLink = Annotated[CatalogSourceLink, Depends(get_source_link)]
+
+
+async def link_end(session: AsyncSession, end) -> CatalogEntity:
+    entity = await find_entity(
+        session, end.datasource_id, end.schema_name, end.entity
+    )
+    if not entity or not await has_column(session, entity, end.column):
+        raise HTTPException(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Coluna '{end.datasource_id}:{end.schema_name}."
+                f"{end.entity}.{end.column}' não encontrada"
+            ),
+        )
+    return entity
+
+
+async def link_payload(session: AsyncSession, link: CatalogSourceLink):
+    source = await session.get(CatalogEntity, link.from_entity_id)
+    target = await session.get(CatalogEntity, link.to_entity_id)
+    return SourceLinkPublic(**asdict(resolve_link(link, source, target)))
+
+
+@router.get('/links', response_model=SourceLinkList)
+async def list_source_links(session: Session):
+    links = await load_links(session)
+    return {'links': [SourceLinkPublic(**asdict(r)) for r in links]}
+
+
+@router.post(
+    '/links',
+    status_code=HTTPStatus.CREATED,
+    response_model=SourceLinkPublic,
+)
+async def create_source_link(data: SourceLinkCreate, session: Session):
+    source = await link_end(session, data.source)
+    target = await link_end(session, data.target)
+    if source.datasource_id == target.datasource_id:
+        raise HTTPException(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail='Uma ligação precisa unir duas fontes diferentes',
+        )
+    pairs = {
+        (source.id, data.source.column, target.id, data.target.column),
+        (target.id, data.target.column, source.id, data.source.column),
+    }
+    existing = await session.scalars(select(CatalogSourceLink))
+    if any(
+        (e.from_entity_id, e.from_column, e.to_entity_id, e.to_column) in pairs
+        for e in existing
+    ):
+        raise HTTPException(
+            status_code=HTTPStatus.CONFLICT,
+            detail='Já existe uma ligação entre essas colunas',
+        )
+    link = CatalogSourceLink(
+        from_entity_id=source.id,
+        from_column=data.source.column,
+        to_entity_id=target.id,
+        to_column=data.target.column,
+        description=data.description,
+        enabled=data.enabled,
+    )
+    session.add(link)
+    await session.commit()
+    return await link_payload(session, link)
+
+
+@router.patch('/links/{link_id}', response_model=SourceLinkPublic)
+async def update_source_link(
+    data: SourceLinkUpdate, link: CurrentSourceLink, session: Session
+):
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(link, field, value)
+    await session.commit()
+    return await link_payload(session, link)
+
+
+@router.delete('/links/{link_id}', status_code=HTTPStatus.NO_CONTENT)
+async def delete_source_link(link: CurrentSourceLink, session: Session):
+    await session.delete(link)
     await session.commit()
 
 

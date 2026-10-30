@@ -410,6 +410,55 @@ class ConceptContextPreview(BaseModel):
     )
 
 
+class SourceLinkEnd(BaseModel):
+    """Uma ponta da ligação: fonte, entidade e coluna."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    datasource_id: str
+    schema_name: str = 'public'
+    entity: str
+    column: str
+
+
+class SourceLinkCreate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    source: SourceLinkEnd = Field(alias='from')
+    target: SourceLinkEnd = Field(alias='to')
+    description: str | None = None
+    enabled: bool = True
+
+
+class SourceLinkUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    description: str | None = None
+    enabled: bool = None
+
+
+class SourceLinkPublic(BaseModel):
+    id: UUID
+    from_datasource_id: str
+    from_entity: str
+    from_column: str
+    to_datasource_id: str
+    to_entity: str
+    to_column: str
+    description: str | None
+    enabled: bool
+    active: bool = Field(
+        description=(
+            'Ligada e com as duas colunas visíveis e presentes: só assim '
+            'vale para consultas.'
+        )
+    )
+
+
+class SourceLinkList(BaseModel):
+    links: list[SourceLinkPublic]
+
+
 class RelationshipPublic(BaseModel):
     id: UUID
     from_entity_id: UUID

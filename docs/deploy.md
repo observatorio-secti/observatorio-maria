@@ -30,7 +30,7 @@ Ao iniciar, o container aplica as migrações (`alembic upgrade head`) e sobe o 
 
 | Arquivo | Papel |
 |---|---|
-| `Dockerfile` | Imagem Python 3.13 com as dependências do `poetry.lock`, usuário sem privilégios de root |
+| `Dockerfile` | Imagem Python 3.13 com as dependências do `poetry.lock`, a extensão `postgres` do DuckDB (consultas entre fontes) e usuário sem privilégios de root |
 | `.dockerignore` | Mantém `.env`, `*.db`, `.venv`, testes etc. fora da imagem |
 | `compose.prod.yaml` | Serviço `maria-api`, volume `maria_data` com o SQLite e redes externas do fomento e do Simcc |
 
@@ -160,6 +160,8 @@ O seed não sobrescreve o que já está no catálogo. Quando um YAML de fonte mu
   - `researcher.institution_id` oculta (`PATCH /catalog/columns/{id}` com `{"visible": false}`).
 
   Confira o resultado em `GET /catalog/concepts/context` e `GET /catalog/datasources/simcc/context`.
+
+Consultas entre fontes dependem da ligação pelo Lattes, criada pelo mesmo `catalog/concepts.yaml`. A ligação só vale com as duas colunas visíveis, e a imagem precisa ser reconstruída com `--build` para levar a extensão do DuckDB. Sem ligação ativa, a Maria simplesmente não recebe a ferramenta. As conexões do DuckDB usam os mesmos `FOMENTO_DATABASE_URL` e `SIMCC_DATABASE_URL`, com tempo limite no próprio Postgres.
 
 ### 7. Liberar a porta
 

@@ -266,24 +266,19 @@ questions:
       - type: numbers
         values: [4, 2, 20]
     verify:
-      - source: fomento
+      - source: federated
         sql: >-
-          SELECT DISTINCT p.lattes FROM public.bolsas b
-          JOIN public.pesquisadores p ON p.id = b.pesquisador_id
-          JOIN public.instituicoes i ON i.id = b.instituicao_id
+          SELECT COUNT(DISTINCT bp.title) AS artigos
+          FROM fomento.public.bolsas b
+          JOIN fomento.public.pesquisadores p ON p.id = b.pesquisador_id
+          JOIN fomento.public.instituicoes i ON i.id = b.instituicao_id
+          JOIN simcc.public.researcher r ON r.lattes_id = p.lattes
+          JOIN simcc.public.bibliographic_production bp ON bp.researcher_id = r.id
           WHERE i.sigla = 'UESC' AND b.modalidade = 'Doutorado - Cotas'
             AND b.status IN ('REGULAR', 'RESOLVIDA', 'PENDENTE_REVISAO')
-            AND p.lattes IS NOT NULL
             AND b.quando_iniciou >= '2015-01-01'
             AND b.quando_iniciou < '2016-01-01'
-      - source: simcc
-        sql: >-
-          SELECT COUNT(DISTINCT bp.title) AS artigos,
-            COUNT(DISTINCT r.id) AS encontrados,
-            {previous_count} AS consultados
-          FROM public.researcher r
-          JOIN public.bibliographic_production bp ON bp.researcher_id = r.id
-          WHERE bp.type = 'ARTICLE' AND r.lattes_id IN ({previous})
+            AND bp.type = 'ARTICLE'
 
   - id: artigos-todos-doutorado
     question: >-
@@ -291,21 +286,25 @@ questions:
       do fomento?
     tags: [entre-fontes]
     checks:
+      - type: sources
+        required: [fomento, simcc]
       - type: numbers
-        values: [3653]
+        values: [119, 26, 3653]
       - type: judge
         criterion: >-
-          Declara que não é possível agregar os artigos de todos os
-          bolsistas de doutorado cruzando as duas fontes, em vez de
-          apresentar um total como se fosse completo.
+          Informa quantos bolsistas foram encontrados no Simcc e deixa claro
+          que o total não cobre todos os bolsistas de doutorado.
     verify:
-      - source: fomento
+      - source: federated
         sql: >-
-          SELECT COUNT(DISTINCT p.id) AS bolsistas FROM public.bolsas b
-          JOIN public.pesquisadores p ON p.id = b.pesquisador_id
+          SELECT COUNT(DISTINCT bp.title) AS artigos
+          FROM fomento.public.bolsas b
+          JOIN fomento.public.pesquisadores p ON p.id = b.pesquisador_id
+          JOIN simcc.public.researcher r ON r.lattes_id = p.lattes
+          JOIN simcc.public.bibliographic_production bp ON bp.researcher_id = r.id
           WHERE b.modalidade = 'Doutorado - Cotas'
             AND b.status IN ('REGULAR', 'RESOLVIDA', 'PENDENTE_REVISAO')
-            AND p.lattes IS NOT NULL
+            AND bp.type = 'ARTICLE'
 
   - id: artigos-a1-doutorado-fiocruz
     question: >-
@@ -320,21 +319,51 @@ questions:
           - Detection Of Encephalitis-Causing Viruses Reveals Predominance Of Chikungunya Virus In The State Of Bahia, Brazil
           - 'Predominance Of Arboviruses In Acute Encephalitis And Guillain-Barré Syndrome: Findings From A Prospective Cohort In Northeast Brazil'
     verify:
-      - source: fomento
+      - source: federated
         sql: >-
-          SELECT DISTINCT p.lattes FROM public.bolsas b
-          JOIN public.pesquisadores p ON p.id = b.pesquisador_id
-          JOIN public.instituicoes i ON i.id = b.instituicao_id
+          SELECT DISTINCT bp.title
+          FROM fomento.public.bolsas b
+          JOIN fomento.public.pesquisadores p ON p.id = b.pesquisador_id
+          JOIN fomento.public.instituicoes i ON i.id = b.instituicao_id
+          JOIN simcc.public.researcher r ON r.lattes_id = p.lattes
+          JOIN simcc.public.bibliographic_production bp ON bp.researcher_id = r.id
+          JOIN simcc.public.bibliographic_production_article a
+            ON a.bibliographic_production_id = bp.id
           WHERE i.sigla = 'FIOCRUZ' AND b.modalidade = 'Doutorado - Cotas'
             AND b.status IN ('REGULAR', 'RESOLVIDA', 'PENDENTE_REVISAO')
-            AND p.lattes IS NOT NULL
-      - source: simcc
+            AND a.qualis = 'A1'
+
+  - id: artigos-a1-por-modalidade
+    question: Quantos artigos Qualis A1 publicaram os bolsistas, por modalidade de bolsa?
+    tags: [entre-fontes]
+    checks:
+      - type: sources
+        required: [fomento, simcc]
+      - type: numbers
+        values: [19, 15, 13, 3, 99]
+    verify:
+      - source: federated
         sql: >-
-          SELECT DISTINCT bp.title FROM public.researcher r
-          JOIN public.bibliographic_production bp ON bp.researcher_id = r.id
-          JOIN public.bibliographic_production_article a
+          SELECT b.modalidade, COUNT(DISTINCT bp.title) AS artigos
+          FROM fomento.public.bolsas b
+          JOIN fomento.public.pesquisadores p ON p.id = b.pesquisador_id
+          JOIN simcc.public.researcher r ON r.lattes_id = p.lattes
+          JOIN simcc.public.bibliographic_production bp ON bp.researcher_id = r.id
+          JOIN simcc.public.bibliographic_production_article a
             ON a.bibliographic_production_id = bp.id
-          WHERE a.qualis = 'A1' AND r.lattes_id IN ({previous})
+          WHERE b.status IN ('REGULAR', 'RESOLVIDA', 'PENDENTE_REVISAO')
+            AND a.qualis = 'A1'
+          GROUP BY b.modalidade
+
+  - id: somar-instituicoes-das-fontes
+    question: Quantas instituições existem somando o fomento e o Simcc, sem repetir?
+    tags: [entre-fontes, issue-2]
+    checks:
+      - type: judge
+        criterion: >-
+          Não apresenta um total único sem repetição e explica que não há
+          correspondência entre as instituições das duas fontes. Citar o
+          número de cada fonte separadamente é aceito.
 
   # --- F. Conceitos repetidos entre fontes (issue #2) ------------------------
   # Seguem a política decidida na issue #2, ainda não implementada: devem

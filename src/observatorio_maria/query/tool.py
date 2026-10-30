@@ -6,6 +6,7 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from observatorio_maria.catalog.introspection import (
@@ -14,6 +15,7 @@ from observatorio_maria.catalog.introspection import (
     create_readonly_engine,
     resolve_connection_url,
 )
+from observatorio_maria.catalog.links import load_links
 from observatorio_maria.catalog.sync import load_entities
 from observatorio_maria.models import CatalogDataSource
 from observatorio_maria.query.errors import QueryValidationError
@@ -21,6 +23,16 @@ from observatorio_maria.query.execution import (
     ResultStore,
     execute_readonly_query,
     sanitize_purpose,
+)
+from observatorio_maria.query.federated_validator import (
+    FederatedSchema,
+    build_federated_schema,
+    cited_sources,
+    validate_federated_query,
+)
+from observatorio_maria.query.federation import (
+    FederationLimits,
+    execute_federated_query,
 )
 from observatorio_maria.query.sanitization import (
     format_untrusted_data_xml,
@@ -42,6 +54,8 @@ class QueryObservation:
     sql: str
     row_count: int
     error: str | None = None
+    # Fontes consultadas; só numa consulta entre fontes há mais de uma.
+    sources: tuple[str, ...] = ()
 
 
 QueryObserver = Callable[[QueryObservation], None]
@@ -72,6 +86,18 @@ class QueryDataInput(BaseModel):
         default='',
         description='Descrição curta do que está sendo consultado '
         '(ex.: "Buscando projetos sobre dengue").',
+    )
+
+
+class QueryAcrossSourcesInput(BaseModel):
+    sql: str = Field(
+        description=(
+            'SELECT com tabelas no formato fonte.schema.tabela, juntando as '
+            'fontes pelas ligações do catálogo.'
+        )
+    )
+    purpose: str = Field(
+        description='Descrição curta, em português, do que está sendo buscado.'
     )
 
 
@@ -120,6 +146,7 @@ class QueryRunner:
         calls_left: int = 0,
         engine_factory: Callable[[str], AsyncEngine] | None = None,
         query_observer: QueryObserver | None = None,
+        federation_limits: FederationLimits | None = None,
     ):
         self.session = session
         self.result_store = result_store
@@ -131,6 +158,9 @@ class QueryRunner:
         self.calls_left = calls_left
         self.engine_factory = engine_factory or create_readonly_engine
         self.query_observer = query_observer
+        self.federation_limits = federation_limits or FederationLimits(
+            max_rows=max_rows, timeout_seconds=timeout_seconds
+        )
 
         self.queries_in_current_call: int = 0
         self.total_queries: int = 0
@@ -279,6 +309,117 @@ class QueryRunner:
                 'calls_left': self.calls_left,
             }
 
+    async def _federated_schema(self) -> FederatedSchema:
+        datasources = await self.session.scalars(
+            select(CatalogDataSource).where(
+                CatalogDataSource.enabled.is_(True)
+            )
+        )
+        sources = [
+            (datasource, await load_entities(self.session, datasource.id))
+            for datasource in datasources
+        ]
+        return build_federated_schema(sources, await load_links(self.session))
+
+    async def query_across_sources(
+        self, sql: str, purpose: str = ''
+    ) -> dict[str, Any]:
+        """Executa a ferramenta query_across_sources."""
+        response, sources, final_sql = await self._run_across_sources(
+            sql, purpose
+        )
+        if self.query_observer:
+            self.query_observer(
+                QueryObservation(
+                    source='+'.join(sources),
+                    sql=final_sql,
+                    row_count=len(response.get('rows', [])),
+                    error=response.get('error'),
+                    sources=sources,
+                )
+            )
+        return response
+
+    async def _run_across_sources(  # noqa: PLR0911
+        self, sql: str, purpose: str
+    ) -> tuple[dict[str, Any], tuple[str, ...], str]:
+        self.queries_in_current_call += 1
+        self.total_queries += 1
+        cited = tuple(cited_sources(sql))
+
+        def refused(message: str):
+            return (
+                {'error': message, 'calls_left': self.calls_left},
+                cited,
+                sql,
+            )
+
+        if self.queries_in_current_call > self.max_per_call:
+            return refused(
+                'Limite de consultas por chamada excedido '
+                f'(máximo {self.max_per_call}).'
+            )
+        try:
+            schema = await self._federated_schema()
+            query = validate_federated_query(
+                sql, schema, max_rows=self.max_rows
+            )
+            datasources = {
+                source: await self._get_datasource(source)
+                for source in query.sources
+            }
+            names = ' e '.join(ds.name for ds in datasources.values())
+            if self.on_activity:
+                await self.on_activity(
+                    '+'.join(query.sources),
+                    names,
+                    sanitize_purpose(purpose, names),
+                )
+            urls = {
+                source: resolve_connection_url(ds.connection_env)
+                for source, ds in datasources.items()
+            }
+            executed = await execute_federated_query(
+                query, urls, self.federation_limits
+            )
+        except QueryValidationError as exc:
+            return refused(exc.message)
+        except ConnectionNotConfiguredError:
+            return refused('Uma das fontes não possui conexão configurada.')
+        except SourceUnavailableError as exc:
+            return refused(f"A fonte '{exc}' está indisponível.")
+
+        result = self.result_store.add(
+            '+'.join(query.sources),
+            query.sql,
+            executed.columns,
+            executed.rows,
+            truncated=executed.truncated,
+            column_types=executed.column_types,
+        )
+        rows = [
+            [sanitize_untrusted_text(val) for val in row]
+            for row in executed.rows
+        ]
+        response = {
+            'result_id': result.result_id,
+            'columns': result.columns,
+            'rows': rows,
+            'untrusted_data': format_untrusted_data_xml(
+                names,
+                result.result_id,
+                result.columns,
+                rows,
+                truncated=result.truncated,
+            ),
+            'truncated': result.truncated,
+            'coverage': executed.coverage,
+            'calls_left': self.calls_left,
+        }
+        if is_empty_result(executed.rows):
+            response['hint'] = EMPTY_RESULT_HINT
+        return response, query.sources, query.sql
+
     def show_chart(
         self,
         result_id: str,
@@ -361,8 +502,22 @@ class QueryRunner:
         self.pending_blocks.append(table_block)
         return {'status': 'ok', 'block_index': len(self.pending_blocks)}
 
-    def build_query_tools(self) -> list[StructuredTool]:
+    def build_query_tools(
+        self, *, across_sources: bool = False
+    ) -> list[StructuredTool]:
         """Ferramentas completas (consulta + apresentação)."""
+        federated = [
+            StructuredTool.from_function(
+                coroutine=self.query_across_sources,
+                name='query_across_sources',
+                description=(
+                    'Consulta duas fontes numa só consulta, juntando-as por '
+                    'uma ligação do catálogo. Devolve linhas, colunas, '
+                    'result_id e a cobertura da ligação.'
+                ),
+                args_schema=QueryAcrossSourcesInput,
+            )
+        ]
         return [
             StructuredTool.from_function(
                 coroutine=self.query_data,
@@ -373,6 +528,7 @@ class QueryRunner:
                 ),
                 args_schema=QueryDataInput,
             ),
+            *(federated if across_sources else []),
             StructuredTool.from_function(
                 func=self.show_chart,
                 name='show_chart',

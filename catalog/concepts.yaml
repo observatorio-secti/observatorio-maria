@@ -56,3 +56,10 @@ concepts:
     entities:
       - fomento:public.pesquisadores
       - simcc:public.researcher
+
+# Colunas equivalentes em duas fontes. Consultas entre fontes só juntam por
+# estas ligações; `from` é a fonte em que a cobertura é medida.
+links:
+  - from: fomento:public.pesquisadores.lattes
+    to: simcc:public.researcher.lattes_id
+    description: Identificador do currículo Lattes.

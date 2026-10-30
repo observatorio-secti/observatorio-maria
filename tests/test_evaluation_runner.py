@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sqlite3
 
@@ -24,7 +25,9 @@ from observatorio_maria.evaluation.runner import (
 )
 from observatorio_maria.evaluation.verify import (
     check_expected,
+    compare_result,
     sql_literals,
+    verify_question,
 )
 from observatorio_maria.llm.registry import (
     ModelRegistry,
@@ -32,6 +35,7 @@ from observatorio_maria.llm.registry import (
     RegisteredModel,
 )
 from observatorio_maria.models import Conversation, table_registry
+from observatorio_maria.query.execution import QueryResult
 from observatorio_maria.settings import Settings
 from tests.conftest import FailingChatModel, ScriptedToolChatModel
 from tests.test_agent_chat import setup_catalog
@@ -304,6 +308,52 @@ async def test_check_expected_skips_question_without_verify(maria_db):
     (result,) = await run_check(maria_db, [question()])
 
     assert result.status == 'skipped'
+
+
+def fake_result(rows):
+    return QueryResult(
+        result_id='r1',
+        source='a+b',
+        sql='SELECT 1',
+        columns=['n'],
+        rows=rows,
+        truncated=False,
+    )
+
+
+def test_coverage_counts_as_expected_number():
+    q = question(checks=[{'type': 'numbers', 'values': [119, 26, 3653]}])
+    coverage = {'available': True, 'keys': 3653, 'found': 26}
+
+    result = compare_result(q, fake_result([[119]]), None, coverage)
+
+    assert result.status == 'ok'
+
+
+def test_federated_step_uses_consulta_entre_fontes():
+    class Runner:
+        def __init__(self):
+            self.calls = []
+
+        async def query_across_sources(self, sql):
+            self.calls.append(sql)
+            return {'result_id': 'r1', 'coverage': None}
+
+    class Store:
+        @staticmethod
+        def get(result_id):
+            return fake_result([[2]])
+
+    q = question(
+        checks=[{'type': 'numbers', 'values': [2]}],
+        verify=[{'source': 'federated', 'sql': 'SELECT 2 AS n'}],
+    )
+    runner = Runner()
+
+    result = asyncio.run(verify_question(runner, Store(), q))
+
+    assert result.status == 'ok'
+    assert runner.calls == ['SELECT 2 AS n']
 
 
 def write_reference(tmp_path):

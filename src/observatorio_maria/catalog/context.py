@@ -7,6 +7,7 @@ não enxerga. Itens ocultos ou ausentes nunca entram.
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from observatorio_maria.catalog.links import ResolvedLink, load_links
 from observatorio_maria.models import (
     CatalogColumn,
     CatalogConcept,
@@ -325,6 +326,47 @@ def render_concepts(
     )
 
 
+def render_source_links(
+    links: list[ResolvedLink], datasources: list[CatalogDataSource]
+) -> str:
+    """Seção "Consultas entre fontes"; vazia sem ligação ativa entre as
+    fontes dadas."""
+    ids = {ds.id for ds in datasources}
+    active = [
+        link
+        for link in links
+        if link.active
+        and link.from_datasource_id in ids
+        and link.to_datasource_id in ids
+    ]
+    if not active:
+        return ''
+    lines = [
+        '# Consultas entre fontes',
+        '',
+        'Para relacionar duas fontes, use a ferramenta '
+        '`query_across_sources`, com uma única consulta que cita as tabelas '
+        'como `fonte.schema.tabela` e junta as fontes só por estas ligações:',
+    ]
+    for link in active:
+        line = (
+            f'- `{link.from_table}.{link.from_column}` = '
+            f'`{link.to_table}.{link.to_column}`'
+        )
+        if link.description:
+            line += f': {link.description}'
+        lines.append(line)
+    lines += [
+        '',
+        'O resultado traz `coverage`: `keys` chaves na fonte de origem e '
+        '`found` encontradas na outra. Diga sempre esses números ao usuário '
+        '(por exemplo, "1 dos 19 bolsistas está no Simcc") e nunca apresente '
+        'um total parcial como completo. Com `available` falso, diga que a '
+        'cobertura não pôde ser calculada.',
+    ]
+    return '\n'.join(lines) + '\n'
+
+
 async def load_concept_labels(session: AsyncSession) -> dict[str, str]:
     concepts = await session.scalars(select(CatalogConcept))
     return {c.id: c.label for c in concepts}
@@ -333,10 +375,8 @@ async def load_concept_labels(session: AsyncSession) -> dict[str, str]:
 async def load_concepts_context(
     session: AsyncSession, datasources: list[CatalogDataSource]
 ) -> str:
-    """Seção de conceitos para as fontes incluídas no prompt."""
+    """Seções de conceitos e de ligações para as fontes incluídas no prompt."""
     concepts = list(await session.scalars(select(CatalogConcept)))
-    if not concepts:
-        return ''
     entities = list(
         await session.scalars(
             select(CatalogEntity).where(
@@ -345,4 +385,8 @@ async def load_concepts_context(
             )
         )
     )
-    return render_concepts(concepts, entities, datasources)
+    sections = [
+        render_concepts(concepts, entities, datasources),
+        render_source_links(await load_links(session), datasources),
+    ]
+    return '\n'.join(section for section in sections if section)
