@@ -82,20 +82,167 @@ function chartYTitle(series) {
   return unit && series.every((serie) => serie.unit === unit) ? unit : '';
 }
 
-function truncationNotice(block, count) {
-  if (!block.truncated) return null;
-  return el('p', { class: 'block-notice' }, `Mostrando só as primeiras ${count} linhas: o resultado foi cortado pelo limite da consulta.`);
+function chartConfig(block, { text, grid }) {
+  const yTitle = chartYTitle(block.series);
+  const colors = PALETTE();
+  const labels = block.data.map((row) => row[block.x.key]);
+  const isPie = block.chart_type === 'pie';
+  const datasets = block.series.map((serie, i) => ({
+    label: serie.unit ? `${serie.label} (${serie.unit})` : serie.label,
+    data:
+      block.chart_type === 'scatter'
+        ? block.data.map((row) => ({ x: row[block.x.key], y: row[serie.key] }))
+        : block.data.map((row) => row[serie.key]),
+    backgroundColor: isPie ? labels.map((_, j) => colors[j % colors.length]) : colors[i % colors.length],
+    borderColor: colors[i % colors.length],
+    fill: block.chart_type === 'area',
+    tension: 0.25,
+  }));
+  return {
+    type: block.chart_type === 'area' ? 'line' : block.chart_type,
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: text } } },
+      scales: isPie
+        ? {}
+        : {
+            x: { title: { display: true, text: block.x.label, color: text }, ticks: { color: text }, grid: { color: grid } },
+            y: { title: { display: Boolean(yTitle), text: yTitle, color: text }, ticks: { color: text }, grid: { color: grid } },
+          },
+    },
+  };
 }
 
-function originFooter(origin) {
-  if (!origin) return null;
+function truncationText(count) {
+  return `Mostrando só as primeiras ${count} linhas: o resultado foi cortado pelo limite da consulta.`;
+}
+
+function truncationNotice(block, count) {
+  return block.truncated ? el('p', { class: 'block-notice' }, truncationText(count)) : null;
+}
+
+function originText(origin) {
   const parts = [`Fonte: ${origin.sources.join(' e ')}`, origin.description];
   parts.push(`consultado em ${new Date(origin.queried_at).toLocaleDateString('pt-BR')}`);
   if (origin.coverage) {
     const { found, keys } = origin.coverage;
     parts.push(`${found.toLocaleString('pt-BR')} de ${keys.toLocaleString('pt-BR')} encontrados`);
   }
-  return el('p', { class: 'block-notice' }, parts.join(' · '));
+  return parts.join(' · ');
+}
+
+function originFooter(origin) {
+  return origin ? el('p', { class: 'block-notice' }, originText(origin)) : null;
+}
+
+// --- Exportação ------------------------------------------------------------------
+
+function saveFile(blob, title, extension) {
+  const slug = title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const link = el('a', { href: URL.createObjectURL(blob), download: `${slug || 'maria'}.${extension}` });
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number') return String(value).replace('.', ',');
+  let text = String(value);
+  // Dados de terceiros: não podem virar fórmula ao abrir na planilha.
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return /[;"\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function toCsv(columns, rows, block, count) {
+  const lines = [
+    columns.map((column) => csvCell(column.label)).join(';'),
+    ...rows.map((row) => columns.map((column) => csvCell(row[column.key])).join(';')),
+    '',
+    csvCell(block.title ?? ''),
+  ];
+  if (block.truncated) lines.push(csvCell(truncationText(count)));
+  if (block.origin) lines.push(csvCell(originText(block.origin)));
+  return `\ufeff${lines.join('\r\n')}\r\n`;
+}
+
+function saveCsv(columns, rows, block) {
+  const csv = toCsv(columns, rows, block, rows.length);
+  saveFile(new Blob([csv], { type: 'text/csv;charset=utf-8' }), block.title ?? 'tabela', 'csv');
+}
+
+function wrapText(context, text, width) {
+  const lines = [];
+  let line = '';
+  text.split(' ').forEach((word) => {
+    const candidate = line ? `${line} ${word}` : word;
+    if (context.measureText(candidate).width > width && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = candidate;
+    }
+  });
+  if (line) lines.push(line);
+  return lines;
+}
+
+// Redesenha com o tema claro: o canvas da tela é transparente e usa as cores do tema.
+function chartPng(block) {
+  const width = 960;
+  const height = 480;
+  const margin = 24;
+  const canvas = el('canvas', { width, height });
+  const config = chartConfig(block, { text: '#344054', grid: '#e4e7ec' });
+  config.options = { ...config.options, responsive: false, animation: false, devicePixelRatio: 1 };
+  const chart = new Chart(canvas, config);
+
+  const out = el('canvas', { width: width + margin * 2 });
+  const context = out.getContext('2d');
+  context.font = 'bold 20px sans-serif';
+  const title = wrapText(context, block.title, width);
+  context.font = '14px sans-serif';
+  const notes = [block.truncated ? truncationText(block.data.length) : '', block.origin ? originText(block.origin) : '']
+    .filter(Boolean)
+    .flatMap((note) => wrapText(context, note, width));
+  const top = margin + title.length * 26 + 8;
+  out.height = top + height + notes.length * 20 + margin;
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, out.width, out.height);
+  context.fillStyle = '#101828';
+  context.font = 'bold 20px sans-serif';
+  title.forEach((line, i) => context.fillText(line, margin, margin + 18 + i * 26));
+  context.drawImage(canvas, margin, top, width, height);
+  context.fillStyle = '#475467';
+  context.font = '14px sans-serif';
+  notes.forEach((line, i) => context.fillText(line, margin, top + height + 18 + i * 20));
+  chart.destroy();
+  out.toBlob((blob) => saveFile(blob, block.title, 'png'));
+}
+
+function exportActions(actions) {
+  const bar = el('div', { class: 'block-actions' });
+  actions.forEach(([label, run]) => {
+    const button = el('button', { class: 'block-action', type: 'button' }, label);
+    button.addEventListener('click', run);
+    bar.append(button);
+  });
+  return bar;
+}
+
+async function copyMessage(message, button) {
+  const text = message.content.filter((block) => block.type === 'text').map((block) => block.text).join('\n\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = 'Copiado';
+    setTimeout(() => {
+      button.textContent = 'Copiar';
+    }, 1500);
+  } catch {
+    showBanner('Não foi possível copiar: o navegador não permitiu usar a área de transferência.');
+  }
 }
 
 const blockRenderers = {
@@ -106,7 +253,6 @@ const blockRenderers = {
   },
 
   chart(block) {
-    const yTitle = chartYTitle(block.series);
     const node = el('div', { class: 'block block-chart' });
     node.append(el('h4', {}, block.title));
     const wrap = el('div', { class: 'canvas-wrap' });
@@ -117,41 +263,17 @@ const blockRenderers = {
     if (chartNotice) node.append(chartNotice);
     const chartOrigin = originFooter(block.origin);
     if (chartOrigin) node.append(chartOrigin);
-
-    const colors = PALETTE();
-    const labels = block.data.map((row) => row[block.x.key]);
-    const isPie = block.chart_type === 'pie';
-    const datasets = block.series.map((serie, i) => ({
-      label: serie.unit ? `${serie.label} (${serie.unit})` : serie.label,
-      data:
-        block.chart_type === 'scatter'
-          ? block.data.map((row) => ({ x: row[block.x.key], y: row[serie.key] }))
-          : block.data.map((row) => row[serie.key]),
-      backgroundColor: isPie ? labels.map((_, j) => colors[j % colors.length]) : colors[i % colors.length],
-      borderColor: colors[i % colors.length],
-      fill: block.chart_type === 'area',
-      tension: 0.25,
-    }));
+    const chartColumns = [block.x, ...block.series];
+    node.append(
+      exportActions([
+        ['Baixar PNG', () => chartPng(block)],
+        ['Baixar CSV', () => saveCsv(chartColumns, block.data, block)],
+      ])
+    );
 
     // O Chart.js precisa do canvas no DOM para medir; desenha no próximo frame.
     requestAnimationFrame(() => {
-      const grid = cssVar('--border');
-      const text = cssVar('--muted');
-      new Chart(canvas, {
-        type: block.chart_type === 'area' ? 'line' : block.chart_type,
-        data: { labels, datasets },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { labels: { color: text } } },
-          scales: isPie
-            ? {}
-            : {
-                x: { title: { display: true, text: block.x.label, color: text }, ticks: { color: text }, grid: { color: grid } },
-                y: { title: { display: Boolean(yTitle), text: yTitle, color: text }, ticks: { color: text }, grid: { color: grid } },
-              },
-        },
-      });
+      new Chart(canvas, chartConfig(block, { text: cssVar('--muted'), grid: cssVar('--border') }));
     });
     return node;
   },
@@ -185,6 +307,7 @@ const blockRenderers = {
     if (tableNotice) node.append(tableNotice);
     const tableOrigin = originFooter(block.origin);
     if (tableOrigin) node.append(tableOrigin);
+    node.append(exportActions([['Baixar CSV', () => saveCsv(block.columns, block.rows, block)]]));
     return node;
   },
 };
@@ -207,7 +330,13 @@ function renderMessage(message, { pending = false } = {}) {
   const time = message.created_at
     ? new Date(message.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     : 'enviando…';
-  node.append(el('div', { class: 'meta' }, time));
+  const meta = el('div', { class: 'meta' }, time);
+  if (message.role === 'assistant' && message.created_at) {
+    const copy = el('button', { class: 'block-action', type: 'button' }, 'Copiar');
+    copy.addEventListener('click', () => copyMessage(message, copy));
+    meta.append(' ', copy);
+  }
+  node.append(meta);
   return node;
 }
 
