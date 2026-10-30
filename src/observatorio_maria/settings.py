@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     CONVERSATION_MAX_QUESTIONS: int = Field(10, ge=0)
     # Teto de tokens por conversa, opcional; 0 (padrão) desliga.
     CONVERSATION_TOKEN_CEILING: int = Field(0, ge=0)
+    HISTORY_MAX_ROWS: int = Field(20, ge=0)
 
     # Modelos por nível no formato "provedor:modelo" (init_chat_model).
     # Os *_KWARGS são repassados ao construtor do modelo (JSON no .env).

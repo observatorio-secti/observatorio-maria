@@ -213,6 +213,7 @@ As variáveis são lidas do ambiente e do `.env` pelo `Settings` (pydantic-setti
 | `MARIA_AGENT_MAX_MODEL_CALLS` | Orçamento máximo de chamadas ao modelo por resposta da Maria | `6` |
 | `CONVERSATION_MAX_QUESTIONS` | Perguntas por conversa. Na seguinte, a API responde 429 e orienta a iniciar uma nova conversa. `0` desliga | `10` |
 | `CONVERSATION_TOKEN_CEILING` | Teto opcional de tokens acumulados por conversa, como trava de custo. `0` desliga | `0` |
+| `HISTORY_MAX_ROWS` | Linhas de cada gráfico e tabela anteriores enviadas ao modelo no histórico. `0` envia só o resumo | `20` |
 | `FOMENTO_DATABASE_URL` | URL do banco do fomento, com driver assíncrono (`postgresql+psycopg://…`). O nome da variável é definido por fonte no catálogo | — |
 | `SIMCC_DATABASE_URL` | URL do banco de leitura do Simcc (`postgresql+psycopg://…/simcc`), usada pela fonte `simcc` | — |
 
@@ -270,6 +271,8 @@ Em `show_chart` e `show_table`, o modelo informa rótulos em `labels` (coluna �
 `chart` e `table` têm `truncated`, verdadeiro quando o resultado foi cortado por `QUERY_MAX_ROWS`. Mensagens gravadas sem o campo valem como `false`. Um `LIMIT` escrito na própria consulta não marca o campo.
 
 `chart` e `table` também trazem `origin`, gravado a partir da consulta usada: nomes das fontes (`sources`), descrição (`description`, com CPF e e-mail mascarados), momento da consulta (`queried_at`) e, entre fontes, `coverage` com `keys` e `found`. O SQL não entra no bloco. Mensagens gravadas sem o campo voltam com `origin` nulo.
+
+No histórico enviado ao modelo, gráficos e tabelas anteriores trazem o resumo e até `HISTORY_MAX_ROWS` linhas, com células de até 200 caracteres. Esses valores vão sempre em `<untrusted_database_data>`, mascarados, mesmo que o bloco gravado não esteja.
 
 Respostas que consultaram dados terminam com um bloco `suggestions` (`questions`, com até 3 perguntas de continuação), gerado no nível `fast` depois da resposta. Se a geração falhar, o bloco só não vem. Ele fica fora do histórico enviado ao modelo e não aparece na última pergunta permitida da conversa.
 

@@ -64,6 +64,11 @@ from observatorio_maria.query.execution import (
 )
 from observatorio_maria.query.federated_validator import cited_sources
 from observatorio_maria.query.federation import FederationLimits
+from observatorio_maria.query.sanitization import (
+    format_untrusted_data_xml,
+    sanitize_untrusted_text,
+    truncate_cell_text,
+)
 from observatorio_maria.query.tool import QueryObserver, QueryRunner
 from observatorio_maria.schemas import SuggestionsBlock, TextBlock
 from observatorio_maria.settings import Settings
@@ -79,6 +84,8 @@ QUERY_TOOLS = {'query_data', 'query_across_sources'}
 CHAT_MODEL_TIER = ModelTier.MEDIUM
 
 SUGGESTIONS_TIMEOUT_SECONDS = 10
+
+HISTORY_CELL_MAX_LENGTH = 200
 
 
 class ModelInvocationError(Exception):
@@ -115,7 +122,35 @@ class _TokenUsageTracker(BaseCallbackHandler):
             pass
 
 
-def summarize_chart(block: dict[str, Any]) -> str:
+def _history_cell(value: Any) -> Any:
+    # Mascara antes de cortar, para o corte não esconder o padrão do CPF.
+    clean = sanitize_untrusted_text(value)
+    if isinstance(clean, str):
+        return truncate_cell_text(clean, HISTORY_CELL_MAX_LENGTH)
+    return clean
+
+
+def _history_values(
+    block: dict[str, Any],
+    columns: list[str],
+    rows: list[dict[str, Any]],
+    max_rows: int,
+) -> str:
+    """Linhas de um bloco anterior, sempre em quarentena e mascaradas."""
+    if max_rows <= 0 or not rows:
+        return ''
+    shown = rows[:max_rows]
+    origin = block.get('origin') or {}
+    return '\n' + format_untrusted_data_xml(
+        ' e '.join(origin.get('sources') or ['conversa']),
+        'historico',
+        columns,
+        [[_history_cell(row.get(c)) for c in columns] for row in shown],
+        truncated=len(shown) < len(rows) or bool(block.get('truncated')),
+    )
+
+
+def summarize_chart(block: dict[str, Any], max_rows: int = 0) -> str:
     """Resume bloco de gráfico para o histórico do modelo."""
     title = block.get('title') or 'Sem título'
     series = block.get('series') or []
@@ -128,13 +163,17 @@ def summarize_chart(block: dict[str, Any]) -> str:
     else:
         series_str = str(series)
     data = block.get('data') or []
+    columns = [
+        (block.get('x') or {}).get('key', ''),
+        *(s.get('key', '') for s in series if isinstance(s, dict)),
+    ]
     return (
         f'[Gráfico: {title} | Séries: {series_str} | '
         f'Total de registros: {len(data)}]'
-    )
+    ) + _history_values(block, columns, data, max_rows)
 
 
-def summarize_table(block: dict[str, Any]) -> str:
+def summarize_table(block: dict[str, Any], max_rows: int = 0) -> str:
     """Resume bloco de tabela para o histórico do modelo."""
     title = block.get('title') or 'Tabela'
     columns = block.get('columns') or []
@@ -144,13 +183,14 @@ def summarize_table(block: dict[str, Any]) -> str:
     ]
     col_str = ', '.join(filter(None, labels))
     rows = block.get('rows') or []
+    keys = [c.get('key', '') for c in columns if isinstance(c, dict)]
     return (
         f'[Tabela: {title} | Colunas: {col_str} | '
         f'Total de linhas: {len(rows)}]'
-    )
+    ) + _history_values(block, keys, rows, max_rows)
 
 
-def blocks_to_text(blocks: list[dict[str, Any]]) -> str:
+def blocks_to_text(blocks: list[dict[str, Any]], max_rows: int = 0) -> str:
     """Converte blocos persistidos no texto enviado ao modelo."""
     parts = []
     for block in blocks:
@@ -158,9 +198,9 @@ def blocks_to_text(blocks: list[dict[str, Any]]) -> str:
         if btype == 'text':
             parts.append(block.get('text', ''))
         elif btype == 'chart':
-            parts.append(summarize_chart(block))
+            parts.append(summarize_chart(block, max_rows))
         elif btype == 'table':
-            parts.append(summarize_table(block))
+            parts.append(summarize_table(block, max_rows))
         elif btype == 'suggestions':
             continue
         else:
@@ -168,8 +208,8 @@ def blocks_to_text(blocks: list[dict[str, Any]]) -> str:
     return '\n\n'.join(p for p in parts if p)
 
 
-def to_langchain_message(message: Message) -> BaseMessage:
-    text = blocks_to_text(message.content)
+def to_langchain_message(message: Message, max_rows: int = 0) -> BaseMessage:
+    text = blocks_to_text(message.content, max_rows)
     if message.role == MessageRole.USER:
         return HumanMessage(text)
     return AIMessage(text)
@@ -407,7 +447,10 @@ class ChatService:
 
         messages: list[BaseMessage] = [
             SystemMessage(system_prompt),
-            *(to_langchain_message(m) for m in history),
+            *(
+                to_langchain_message(m, self.settings.HISTORY_MAX_ROWS)
+                for m in history
+            ),
             HumanMessage(content),
         ]
 
