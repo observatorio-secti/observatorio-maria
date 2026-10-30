@@ -1,9 +1,10 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import suppress
 from dataclasses import dataclass
+from itertools import count, repeat
 from typing import Annotated, Any
 
 from fastapi import Depends
@@ -60,6 +61,7 @@ from observatorio_maria.observability.genai import (
 )
 from observatorio_maria.query.execution import (
     ResultStore,
+    result_from_block,
     sanitize_purpose,
 )
 from observatorio_maria.query.federated_validator import cited_sources
@@ -150,7 +152,13 @@ def _history_values(
     )
 
 
-def summarize_chart(block: dict[str, Any], max_rows: int = 0) -> str:
+def _history_reference(result_id: str, keys: list[str]) -> str:
+    return f'Resultado: {result_id} | Chaves: {", ".join(keys)} | '
+
+
+def summarize_chart(
+    block: dict[str, Any], max_rows: int = 0, result_id: str = ''
+) -> str:
     """Resume bloco de gráfico para o histórico do modelo."""
     title = block.get('title') or 'Sem título'
     series = block.get('series') or []
@@ -167,13 +175,16 @@ def summarize_chart(block: dict[str, Any], max_rows: int = 0) -> str:
         (block.get('x') or {}).get('key', ''),
         *(s.get('key', '') for s in series if isinstance(s, dict)),
     ]
+    reference = _history_reference(result_id, columns) if result_id else ''
     return (
-        f'[Gráfico: {title} | Séries: {series_str} | '
+        f'[Gráfico: {title} | {reference}Séries: {series_str} | '
         f'Total de registros: {len(data)}]'
     ) + _history_values(block, columns, data, max_rows)
 
 
-def summarize_table(block: dict[str, Any], max_rows: int = 0) -> str:
+def summarize_table(
+    block: dict[str, Any], max_rows: int = 0, result_id: str = ''
+) -> str:
     """Resume bloco de tabela para o histórico do modelo."""
     title = block.get('title') or 'Tabela'
     columns = block.get('columns') or []
@@ -184,23 +195,29 @@ def summarize_table(block: dict[str, Any], max_rows: int = 0) -> str:
     col_str = ', '.join(filter(None, labels))
     rows = block.get('rows') or []
     keys = [c.get('key', '') for c in columns if isinstance(c, dict)]
+    reference = _history_reference(result_id, keys) if result_id else ''
     return (
-        f'[Tabela: {title} | Colunas: {col_str} | '
+        f'[Tabela: {title} | {reference}Colunas: {col_str} | '
         f'Total de linhas: {len(rows)}]'
     ) + _history_values(block, keys, rows, max_rows)
 
 
-def blocks_to_text(blocks: list[dict[str, Any]], max_rows: int = 0) -> str:
+def blocks_to_text(
+    blocks: list[dict[str, Any]],
+    max_rows: int = 0,
+    block_ids: Iterator[str] | None = None,
+) -> str:
     """Converte blocos persistidos no texto enviado ao modelo."""
     parts = []
+    ids = block_ids or repeat('')
     for block in blocks:
         btype = block.get('type')
         if btype == 'text':
             parts.append(block.get('text', ''))
         elif btype == 'chart':
-            parts.append(summarize_chart(block, max_rows))
+            parts.append(summarize_chart(block, max_rows, next(ids)))
         elif btype == 'table':
-            parts.append(summarize_table(block, max_rows))
+            parts.append(summarize_table(block, max_rows, next(ids)))
         elif btype == 'suggestions':
             continue
         else:
@@ -208,11 +225,33 @@ def blocks_to_text(blocks: list[dict[str, Any]], max_rows: int = 0) -> str:
     return '\n\n'.join(p for p in parts if p)
 
 
-def to_langchain_message(message: Message, max_rows: int = 0) -> BaseMessage:
-    text = blocks_to_text(message.content, max_rows)
+def to_langchain_message(
+    message: Message,
+    max_rows: int = 0,
+    block_ids: Iterator[str] | None = None,
+) -> BaseMessage:
+    text = blocks_to_text(message.content, max_rows, block_ids)
     if message.role == MessageRole.USER:
         return HumanMessage(text)
     return AIMessage(text)
+
+
+def history_block_ids() -> Iterator[str]:
+    """Identificadores dos blocos anteriores, em ordem cronológica."""
+    return (f'h{n}' for n in count(1))
+
+
+def restore_history_results(
+    history: list[Message], result_store: ResultStore
+) -> None:
+    """Disponibiliza gráficos e tabelas anteriores como resultados."""
+    ids = history_block_ids()
+    for message in history:
+        for block in message.content:
+            if block.get('type') in {'chart', 'table'}:
+                result = result_from_block(block, next(ids))
+                if result:
+                    result_store.restore(result)
 
 
 def auto_title(content: str) -> str:
@@ -417,6 +456,7 @@ class ChatService:
         yield UserMessageCreated(user_message)
 
         result_store = ResultStore()
+        restore_history_results(history, result_store)
         query_runner = QueryRunner(
             self.session,
             result_store,
@@ -445,10 +485,13 @@ class ChatService:
             else []
         )
 
+        block_ids = history_block_ids()
         messages: list[BaseMessage] = [
             SystemMessage(system_prompt),
             *(
-                to_langchain_message(m, self.settings.HISTORY_MAX_ROWS)
+                to_langchain_message(
+                    m, self.settings.HISTORY_MAX_ROWS, block_ids
+                )
                 for m in history
             ),
             HumanMessage(content),

@@ -125,6 +125,16 @@ def build_origin(
     }
 
 
+def axis_type(column_type: str | None) -> str:
+    """Tipo aceito no eixo de um gráfico: texto é categoria."""
+    return column_type if column_type in {'number', 'date'} else 'category'
+
+
+def table_column_type(column_type: str | None) -> str:
+    """Tipo aceito numa coluna de tabela: categoria é texto."""
+    return column_type if column_type in {'number', 'date'} else 'string'
+
+
 def column_label(key: str, labels: dict[str, str] | None) -> str:
     """Rótulo informado pelo modelo ou, sem ele, a chave legível."""
     if labels and labels.get(key):
@@ -511,7 +521,7 @@ class QueryRunner:
             'x': {
                 'key': x,
                 'label': column_label(x, labels),
-                'type': result.column_types.get(x, 'category'),
+                'type': axis_type(result.column_types.get(x)),
             },
             'series': [
                 {
@@ -559,7 +569,7 @@ class QueryRunner:
                 {
                     'key': c,
                     'label': column_label(c, labels),
-                    'type': result.column_types.get(c, 'string'),
+                    'type': table_column_type(result.column_types.get(c)),
                 }
                 for c in columns
             ],

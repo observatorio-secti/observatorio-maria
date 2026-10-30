@@ -123,11 +123,46 @@ class ResultStore:
         self._results[result_id] = res
         return res
 
+    def restore(self, result: QueryResult) -> None:
+        """Registra um resultado refeito a partir de um bloco anterior."""
+        self._results[result.result_id] = result
+
     def get(self, result_id: str) -> QueryResult | None:
         return self._results.get(result_id)
 
     def all(self) -> list[QueryResult]:
         return list(self._results.values())
+
+
+def result_from_block(
+    block: dict[str, Any], result_id: str
+) -> QueryResult | None:
+    """Refaz um resultado com as colunas e linhas gravadas num bloco."""
+    if block.get('type') == 'chart':
+        axis = block.get('x') or {}
+        keys = [axis.get('key', '')]
+        keys += [s.get('key', '') for s in block.get('series') or []]
+        types = {s.get('key', ''): 'number' for s in block.get('series') or []}
+        types[axis.get('key', '')] = axis.get('type', 'category')
+        rows = block.get('data') or []
+    elif block.get('type') == 'table':
+        columns = block.get('columns') or []
+        keys = [c.get('key', '') for c in columns]
+        types = {c.get('key', ''): c.get('type', 'string') for c in columns}
+        rows = block.get('rows') or []
+    else:
+        return None
+    origin = block.get('origin') or {}
+    return QueryResult(
+        result_id=result_id,
+        source=' e '.join(origin.get('sources') or []),
+        sql='',
+        columns=keys,
+        rows=[[row.get(key) for key in keys] for row in rows],
+        truncated=bool(block.get('truncated')),
+        column_types=types,
+        origin=block.get('origin'),
+    )
 
 
 def sanitize_purpose(purpose: str | None, source_name: str) -> str:

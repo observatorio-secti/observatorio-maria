@@ -1836,3 +1836,238 @@ def test_tool_rules_cover_previous_values():
 
     assert 'Valores anteriores' in prompt
     assert 'consulte de novo antes de afirmar totais' in prompt
+
+
+async def _reuse_setup(session, conversation, fomento_source):
+    await setup_catalog(session, fomento_source)
+    session.add(
+        Message(
+            conversation_id=UUID(conversation['id']),
+            role=MessageRole.ASSISTANT,
+            content=[
+                {
+                    'type': 'chart',
+                    'chart_type': 'bar',
+                    'title': 'Bolsas',
+                    'x': {'key': 'ano', 'label': 'Ano', 'type': 'category'},
+                    'series': [{'key': 'total', 'label': 'Total'}],
+                    'data': [{'ano': 2024, 'total': 3}],
+                    'truncated': True,
+                    'origin': {
+                        'sources': ['Fomento à Pesquisa'],
+                        'description': 'Bolsas por ano',
+                        'queried_at': '2026-10-01T12:00:00Z',
+                        'coverage': None,
+                    },
+                },
+                {
+                    'type': 'table',
+                    'title': 'Projetos',
+                    'columns': [{'key': 'nome', 'label': 'Nome'}],
+                    'rows': [{'nome': 'Dengue'}],
+                },
+            ],
+        )
+    )
+    await session.commit()
+
+
+def _reuse_turn(args, name='show_chart'):
+    return AIMessage(
+        content='',
+        tool_calls=[{'name': name, 'args': args, 'id': 'h'}],
+    )
+
+
+PIE_ARGS = {
+    'result_id': 'h1',
+    'chart_type': 'pie',
+    'title': 'Em pizza',
+    'x': 'ano',
+    'series': ['total'],
+}
+
+
+@pytest.mark.asyncio
+async def test_previous_chart_is_shown_again_without_query(
+    client, session, conversation, fomento_source
+):
+    await _reuse_setup(session, conversation, fomento_source)
+    model = ScriptedToolChatModel(
+        responses=[_reuse_turn(PIE_ARGS), AIMessage('Mesmos dados.')]
+    )
+    set_test_model(model)
+
+    blocks = await _ask(client, conversation, 'Mostra em pizza')
+
+    chart = next(b for b in blocks if b['type'] == 'chart')
+    assert chart['chart_type'] == 'pie'
+    assert chart['data'] == [{'ano': 2024, 'total': 3}]
+    assert chart['truncated'] is True
+    assert chart['origin']['description'] == 'Bolsas por ano'
+    assert chart['origin']['queried_at'].startswith('2026-10-01')
+    assert blocks[0]['text'] == 'Mesmos dados.'
+
+
+@pytest.mark.asyncio
+async def test_previous_chart_can_become_a_table(
+    client, session, conversation, fomento_source
+):
+    await _reuse_setup(session, conversation, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[
+                _reuse_turn(
+                    {'result_id': 'h1', 'columns': ['ano', 'total']},
+                    'show_table',
+                ),
+                AIMessage('Como tabela.'),
+            ]
+        )
+    )
+
+    blocks = await _ask(client, conversation, 'Agora em tabela')
+
+    table = next(b for b in blocks if b['type'] == 'table')
+    assert table['rows'] == [{'ano': 2024, 'total': 3}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ('args', 'reason'),
+    [
+        ({**PIE_ARGS, 'series': ['outra']}, 'outra'),
+        ({**PIE_ARGS, 'result_id': 'h9'}, 'h9'),
+    ],
+)
+async def test_invalid_reuse_is_refused_with_reason(  # noqa: PLR0913, PLR0917
+    client, session, conversation, fomento_source, args, reason
+):
+    await _reuse_setup(session, conversation, fomento_source)
+    model = ScriptedToolChatModel(
+        responses=[_reuse_turn(args), AIMessage('Vou consultar.')]
+    )
+    set_test_model(model)
+
+    blocks = await _ask(client, conversation, 'Mostra em pizza')
+
+    assert [b['type'] for b in blocks] == ['text']
+    tool_message = model.recorded_calls[1][-1]
+    assert isinstance(tool_message, ToolMessage)
+    assert reason in tool_message.content
+
+
+@pytest.mark.asyncio
+async def test_history_cites_ids_and_keys_of_previous_blocks(
+    client, session, conversation, fomento_source
+):
+    await _reuse_setup(session, conversation, fomento_source)
+    model = ScriptedToolChatModel(responses=[AIMessage('Certo.')])
+    set_test_model(model)
+
+    await _ask(client, conversation, 'E agora?')
+
+    history = model.recorded_calls[0][1].content
+    assert 'Resultado: h1 | Chaves: ano, total' in history
+    assert 'Resultado: h2 | Chaves: nome' in history
+
+
+def test_tool_rules_cover_showing_previous_data_again():
+    prompt = build_system_prompt(source_contexts=['## Fonte'])
+
+    assert 'Reapresentação' in prompt
+    assert 'sem nova consulta' in prompt
+
+
+def _text_axis_chart():
+    return AIMessage(
+        content='',
+        tool_calls=[
+            {
+                'name': 'show_chart',
+                'args': {
+                    'result_id': 'r1',
+                    'chart_type': 'bar',
+                    'title': 'Por projeto',
+                    'x': 'nome',
+                    'series': ['orcamento'],
+                },
+                'id': 'g1',
+            }
+        ],
+    )
+
+
+def _text_query_turn():
+    return AIMessage(
+        content='',
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'SELECT nome, orcamento FROM projetos',
+                },
+                'id': 'q1',
+            }
+        ],
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('path', ['messages', 'messages/stream'])
+async def test_chart_with_text_axis_is_returned(
+    client, session, conversation, fomento_source, path
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[
+                _text_query_turn(),
+                _text_axis_chart(),
+                AIMessage('Por projeto.'),
+            ]
+        )
+    )
+
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/{path}',
+        json={'content': 'Orçamento por projeto'},
+    )
+
+    assert res.status_code < HTTPStatus.BAD_REQUEST
+    if path == 'messages':
+        content = res.json()['assistant_message']['content']
+    else:
+        content = parse_sse(res.text)[-1][1]['content']
+    chart = next(b for b in content if b['type'] == 'chart')
+    assert chart['x']['type'] == 'category'
+
+
+@pytest.mark.asyncio
+async def test_stored_blocks_with_old_types_are_read(
+    client, session, conversation
+):
+    session.add(
+        Message(
+            conversation_id=UUID(conversation['id']),
+            role=MessageRole.ASSISTANT,
+            content=[
+                {
+                    'type': 'chart',
+                    'chart_type': 'bar',
+                    'title': 'Antigo',
+                    'x': {'key': 'nome', 'label': 'Nome', 'type': 'string'},
+                    'series': [{'key': 'total', 'label': 'Total'}],
+                    'data': [{'nome': 'A', 'total': 1}],
+                }
+            ],
+        )
+    )
+    await session.commit()
+
+    res = await client.get(f'/conversations/{conversation["id"]}/messages')
+
+    assert res.status_code == HTTPStatus.OK
+    block = res.json()['messages'][0]['content'][0]
+    assert block['x']['type'] == 'category'

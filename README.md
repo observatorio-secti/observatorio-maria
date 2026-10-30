@@ -274,6 +274,8 @@ Em `show_chart` e `show_table`, o modelo informa rótulos em `labels` (coluna �
 
 No histórico enviado ao modelo, gráficos e tabelas anteriores trazem o resumo e até `HISTORY_MAX_ROWS` linhas, com células de até 200 caracteres. Esses valores vão sempre em `<untrusted_database_data>`, mascarados, mesmo que o bloco gravado não esteja.
 
+Esses blocos anteriores também ficam disponíveis como resultados `h1`, `h2`…, em ordem cronológica, citados no histórico com as chaves das colunas. Assim, `show_chart` e `show_table` reapresentam os dados sem consultar as origens, e o novo bloco herda `truncated` e `origin`, com a data da consulta original. Só o que foi gravado no bloco pode ser reusado.
+
 Respostas que consultaram dados terminam com um bloco `suggestions` (`questions`, com até 3 perguntas de continuação), gerado no nível `fast` depois da resposta. Se a geração falhar, o bloco só não vem. Ele fica fora do histórico enviado ao modelo e não aparece na última pergunta permitida da conversa.
 
 ### Streaming (Server-Sent Events)

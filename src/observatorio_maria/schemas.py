@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from observatorio_maria.catalog.yaml_io import ColumnValue, EnvName, Slug
 from observatorio_maria.models import (
@@ -73,6 +73,12 @@ class ChartAxis(BaseModel):
     label: str
     type: Literal['category', 'number', 'date'] = 'category'
 
+    @field_validator('type', mode='before')
+    @classmethod
+    def read_text_as_category(cls, value: Any) -> Any:
+        # Blocos gravados antes da correção têm eixo de texto como `string`.
+        return 'category' if value == 'string' else value
+
 
 class ChartSeries(BaseModel):
     key: str = Field(description='Chave do valor em cada item de `data`.')
@@ -112,6 +118,11 @@ class TableColumn(BaseModel):
     key: str
     label: str
     type: Literal['string', 'number', 'date'] = 'string'
+
+    @field_validator('type', mode='before')
+    @classmethod
+    def read_category_as_text(cls, value: Any) -> Any:
+        return 'string' if value == 'category' else value
 
 
 class TableBlock(BaseModel):
