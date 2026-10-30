@@ -86,6 +86,17 @@ function truncationNotice(block, count) {
   return el('p', { class: 'block-notice' }, `Mostrando só as primeiras ${count} linhas: o resultado foi cortado pelo limite da consulta.`);
 }
 
+function originFooter(origin) {
+  if (!origin) return null;
+  const parts = [`Fonte: ${origin.sources.join(' e ')}`, origin.description];
+  parts.push(`consultado em ${new Date(origin.queried_at).toLocaleDateString('pt-BR')}`);
+  if (origin.coverage) {
+    const { found, keys } = origin.coverage;
+    parts.push(`${found.toLocaleString('pt-BR')} de ${keys.toLocaleString('pt-BR')} encontrados`);
+  }
+  return el('p', { class: 'block-notice' }, parts.join(' · '));
+}
+
 const blockRenderers = {
   text(block) {
     const node = el('div', { class: 'block block-text' });
@@ -103,6 +114,8 @@ const blockRenderers = {
     node.append(wrap);
     const chartNotice = truncationNotice(block, block.data.length);
     if (chartNotice) node.append(chartNotice);
+    const chartOrigin = originFooter(block.origin);
+    if (chartOrigin) node.append(chartOrigin);
 
     const colors = PALETTE();
     const labels = block.data.map((row) => row[block.x.key]);
@@ -169,6 +182,8 @@ const blockRenderers = {
     node.append(table);
     const tableNotice = truncationNotice(block, block.rows.length);
     if (tableNotice) node.append(tableNotice);
+    const tableOrigin = originFooter(block.origin);
+    if (tableOrigin) node.append(tableOrigin);
     return node;
   },
 };
@@ -450,6 +465,12 @@ const SAMPLE_CONTENT = [
       { ano: '2023', mestrado: 498, doutorado: 270 },
       { ano: '2024', mestrado: 530, doutorado: 301 },
     ],
+    origin: {
+      sources: ['Fomento à Pesquisa'],
+      description: 'Bolsas por ano e modalidade',
+      queried_at: '2026-10-23T08:00:00Z',
+      coverage: null,
+    },
   },
   {
     type: 'table',

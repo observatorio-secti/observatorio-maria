@@ -80,6 +80,18 @@ class ChartSeries(BaseModel):
     unit: str | None = None
 
 
+class BlockCoverage(BaseModel):
+    keys: int = Field(description='Chaves na fonte de origem da ligação.')
+    found: int = Field(description='Chaves encontradas na outra fonte.')
+
+
+class BlockOrigin(BaseModel):
+    sources: list[str] = Field(description='Nomes das fontes consultadas.')
+    description: str = Field(description='O que foi consultado.')
+    queried_at: datetime = Field(description='Momento da consulta.')
+    coverage: BlockCoverage | None = None
+
+
 class ChartBlock(BaseModel):
     type: Literal['chart'] = 'chart'
     chart_type: Literal['bar', 'line', 'area', 'pie', 'scatter']
@@ -93,6 +105,7 @@ class ChartBlock(BaseModel):
         default=False,
         description='O resultado foi cortado pelo limite de linhas.',
     )
+    origin: BlockOrigin | None = None
 
 
 class TableColumn(BaseModel):
@@ -110,6 +123,7 @@ class TableBlock(BaseModel):
         default=False,
         description='O resultado foi cortado pelo limite de linhas.',
     )
+    origin: BlockOrigin | None = None
 
 
 ContentBlock = Annotated[

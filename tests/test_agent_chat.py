@@ -36,7 +36,7 @@ from observatorio_maria.models import (
 from observatorio_maria.observability.genai import get_tracer
 from observatorio_maria.query import execution as exec_module
 from observatorio_maria.query.errors import QueryCostExceededError
-from observatorio_maria.query.tool import column_label
+from observatorio_maria.query.tool import build_origin, column_label
 from observatorio_maria.schemas import TextBlock
 from observatorio_maria.services.chat import ChatService
 from observatorio_maria.settings import Settings
@@ -1451,3 +1451,174 @@ def test_tool_rules_cover_truncated_results():
     assert 'prefira uma consulta agregada' in prompt
     assert 'dados são parciais' in prompt
     assert 'totais ou rankings do recorte' in prompt
+
+
+def _purpose_query_turn(call_id, purpose):
+    turn = _chart_query_turn()
+    call = turn.tool_calls[0]
+    call['id'] = call_id
+    call['args']['purpose'] = purpose
+    return AIMessage(content='', tool_calls=[call])
+
+
+async def _origin_of_chart(client, session, conversation, source, purpose):
+    await setup_catalog(session, source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[
+                _purpose_query_turn('q1', purpose),
+                _labeled_chart_turn({}),
+            ]
+        )
+    )
+    blocks = await _ask(client, conversation)
+    return next(b for b in blocks if b['type'] == 'chart')['origin']
+
+
+@pytest.mark.asyncio
+async def test_block_has_origin_of_the_query(
+    client, session, conversation, fomento_source
+):
+    origin = await _origin_of_chart(
+        client, session, conversation, fomento_source, 'Bolsas por ano'
+    )
+
+    assert origin['sources'] == ['Fomento à Pesquisa']
+    assert origin['description'] == 'Bolsas por ano'
+    assert origin['coverage'] is None
+    assert datetime.fromisoformat(origin['queried_at']).tzinfo is not None
+
+
+@pytest.mark.asyncio
+async def test_origin_without_description_uses_default(
+    client, session, conversation, fomento_source
+):
+    origin = await _origin_of_chart(
+        client, session, conversation, fomento_source, ''
+    )
+
+    assert origin['description'] == 'Consultando Fomento à Pesquisa'
+
+
+@pytest.mark.asyncio
+async def test_origin_masks_personal_data_and_refuses_sql(
+    client, session, conversation, fomento_source
+):
+    masked = await _origin_of_chart(
+        client, session, conversation, fomento_source, 'Dados de a@b.com'
+    )
+    assert 'a@b.com' not in masked['description']
+    assert 'MASCARADO' in masked['description']
+
+    assert (
+        build_origin(['Fonte'], 'SELECT * FROM x')['description']
+        == 'Consultando Fonte'
+    )
+
+
+@pytest.mark.asyncio
+async def test_each_block_has_the_origin_of_its_query(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[
+                _purpose_query_turn('q1', 'Primeira consulta'),
+                _purpose_query_turn('q2', 'Segunda consulta'),
+                AIMessage(
+                    content='',
+                    tool_calls=[
+                        _labeled_chart_turn({}).tool_calls[0],
+                        {
+                            'name': 'show_table',
+                            'args': {'result_id': 'r2', 'columns': ['ano']},
+                            'id': 't1',
+                        },
+                    ],
+                ),
+            ]
+        )
+    )
+
+    blocks = await _ask(client, conversation)
+
+    descriptions = [
+        b['origin']['description'] for b in blocks if b['type'] != 'text'
+    ]
+    assert descriptions == ['Primeira consulta', 'Segunda consulta']
+
+
+@pytest.mark.asyncio
+async def test_block_does_not_expose_sql_or_result_id(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[_chart_query_turn(), _labeled_chart_turn({})]
+        )
+    )
+
+    blocks = await _ask(client, conversation)
+
+    origin = next(b for b in blocks if b['type'] == 'chart')['origin']
+    assert set(origin) == {
+        'sources',
+        'description',
+        'queried_at',
+        'coverage',
+    }
+    assert 'SELECT' not in json.dumps(origin)
+    assert 'r1' not in json.dumps(origin)
+
+
+@pytest.mark.parametrize(
+    ('coverage', 'expected'),
+    [
+        (
+            {
+                'available': True,
+                'source': 'a',
+                'target': 'b',
+                'keys': 19,
+                'found': 1,
+            },
+            {'keys': 19, 'found': 1},
+        ),
+        ({'available': False, 'reason': 'sem cobertura'}, None),
+        (None, None),
+    ],
+)
+def test_origin_coverage_keeps_only_the_numbers(coverage, expected):
+    origin = build_origin(['A', 'B'], 'Cruzamento', coverage)
+
+    assert origin['sources'] == ['A', 'B']
+    assert origin['coverage'] == expected
+
+
+@pytest.mark.asyncio
+async def test_stored_block_without_origin_reads_as_null(
+    client, session, conversation
+):
+    session.add(
+        Message(
+            conversation_id=UUID(conversation['id']),
+            role=MessageRole.ASSISTANT,
+            content=[
+                {
+                    'type': 'chart',
+                    'chart_type': 'bar',
+                    'title': 'Antigo',
+                    'x': {'key': 'ano', 'label': 'Ano'},
+                    'series': [{'key': 'total', 'label': 'Total'}],
+                    'data': [{'ano': 2024, 'total': 1}],
+                }
+            ],
+        )
+    )
+    await session.commit()
+
+    res = await client.get(f'/conversations/{conversation["id"]}/messages')
+
+    assert res.json()['messages'][0]['content'][0]['origin'] is None

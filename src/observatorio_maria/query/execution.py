@@ -87,6 +87,7 @@ class QueryResult:
     rows: list[list[Any]]
     truncated: bool
     column_types: dict[str, str] = field(default_factory=dict)
+    origin: dict[str, Any] | None = None
 
 
 class ResultStore:
@@ -105,6 +106,7 @@ class ResultStore:
         *,
         truncated: bool,
         column_types: dict[str, str] | None = None,
+        origin: dict[str, Any] | None = None,
     ) -> QueryResult:
         self._counter += 1
         result_id = f'r{self._counter}'
@@ -116,6 +118,7 @@ class ResultStore:
             rows=rows,
             truncated=truncated,
             column_types=column_types or {},
+            origin=origin,
         )
         self._results[result_id] = res
         return res

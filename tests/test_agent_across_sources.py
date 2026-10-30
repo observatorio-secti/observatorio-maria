@@ -228,6 +228,9 @@ async def test_result_has_coverage_and_feeds_table(session, two_sources):
     assert assistant.content[1]['rows'] == [
         {'modalidade': 'Doutorado', 'artigos': 5}
     ]
+    origin = assistant.content[1]['origin']
+    assert len(origin['sources']) == 2  # noqa: PLR2004
+    assert origin['coverage'] == {'keys': 2, 'found': 1}
 
 
 async def test_refused_query_goes_back_to_model(session, two_sources):

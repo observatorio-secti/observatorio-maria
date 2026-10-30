@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.tools import StructuredTool
@@ -84,7 +85,8 @@ class QueryDataInput(BaseModel):
     )
     purpose: str = Field(
         default='',
-        description='Descrição curta do que está sendo consultado '
+        description='Descrição curta do que está sendo consultado, para '
+        'quem lê, sem nomes de tabelas ou colunas '
         '(ex.: "Buscando projetos sobre dengue").',
     )
 
@@ -97,8 +99,30 @@ class QueryAcrossSourcesInput(BaseModel):
         )
     )
     purpose: str = Field(
-        description='Descrição curta, em português, do que está sendo buscado.'
+        description=(
+            'Descrição curta, em português, do que está sendo buscado, para '
+            'quem lê, sem nomes de tabelas ou colunas.'
+        )
     )
+
+
+def build_origin(
+    sources: list[str],
+    purpose: str,
+    coverage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Origem gravada nos blocos, sem SQL nem identificadores internos."""
+    description = sanitize_purpose(purpose, ' e '.join(sources))
+    return {
+        'sources': sources,
+        'description': sanitize_untrusted_text(description),
+        'queried_at': datetime.now(UTC).isoformat(),
+        'coverage': (
+            {'keys': coverage['keys'], 'found': coverage['found']}
+            if coverage and coverage.get('available')
+            else None
+        ),
+    }
 
 
 def column_label(key: str, labels: dict[str, str] | None) -> str:
@@ -295,6 +319,9 @@ class QueryRunner:
                 rows,
                 truncated=trunc,
                 column_types=col_types,
+                origin=build_origin(
+                    [datasource.name or datasource.id], purpose
+                ),
             )
             sanitized_rows = [
                 [sanitize_untrusted_text(val) for val in row] for row in rows
@@ -425,6 +452,11 @@ class QueryRunner:
             executed.rows,
             truncated=executed.truncated,
             column_types=executed.column_types,
+            origin=build_origin(
+                [ds.name for ds in datasources.values()],
+                purpose,
+                executed.coverage,
+            ),
         )
         rows = [
             [sanitize_untrusted_text(val) for val in row]
@@ -498,6 +530,7 @@ class QueryRunner:
                 for row in result.rows
             ],
             'truncated': result.truncated,
+            'origin': result.origin,
         }
         self.pending_blocks.append(chart_block)
         return {'status': 'ok', 'block_index': len(self.pending_blocks)}
@@ -539,6 +572,7 @@ class QueryRunner:
                 for row in result.rows
             ],
             'truncated': result.truncated,
+            'origin': result.origin,
         }
         self.pending_blocks.append(table_block)
         return {'status': 'ok', 'block_index': len(self.pending_blocks)}
