@@ -53,6 +53,10 @@ concepts:
       - Simcc: pesquisadores com currículo Lattes na plataforma. Use para nomes, ORCID, currículo e produção.
       - Pergunta genérica, como "quantos pesquisadores existem?": responda pelo fomento, diga que o número é de bolsistas do fomento e mencione numa frase quantos pesquisadores com currículo há no Simcc ou que esse número pode ser consultado.
       - A única ligação entre as fontes é o Lattes (`pesquisadores.lattes` = `researcher.lattes_id`). Nunca some as contagens das duas fontes.
+      - Produção durante a bolsa: só quando a pergunta pedir esse período, use a consulta entre fontes com `bp.year_ >= EXTRACT(YEAR FROM b.quando_iniciou) AND (b.quando_terminou IS NULL OR bp.year_ <= EXTRACT(YEAR FROM b.quando_terminou))`, porque a bolsa sem término não tem limite final. Aplique o filtro de status das bolsas e `bp.type = 'ARTICLE'` quando a pergunta for sobre artigos.
+      - As tabelas base têm uma linha por autor: conte produções com `COUNT(DISTINCT COALESCE(NULLIF(bp.doi, ''), LOWER(bp.title) || '-' || CAST(bp.year_ AS TEXT)))`, sem repetir coautores.
+      - Sem pedido de período, como em "artigos publicados pelos bolsistas", não filtre pela vigência: considere toda a produção.
+      - Ao responder sobre produção durante a bolsa, diga que a comparação é por ano e que a vigência da bolsa não prova que ela financiou a produção.
     entities:
       - fomento:public.pesquisadores
       - simcc:public.researcher

@@ -159,6 +159,18 @@ def test_repository_concepts_file_is_valid():
     }
 
 
+def test_researchers_policy_covers_production_during_grant():
+    document = load_seed_file(Path('catalog/concepts.yaml'))
+    policy = next(c for c in document.concepts if c.id == 'pesquisadores')
+
+    assert 'b.quando_terminou IS NULL' in policy.instructions
+    assert 'COUNT(DISTINCT COALESCE' in policy.instructions
+    assert 'só quando a pergunta pedir esse período' in policy.instructions
+    assert 'não filtre pela vigência' in policy.instructions
+    assert 'comparação é por ano' in policy.instructions
+    assert 'não prova que ela financiou' in policy.instructions
+
+
 async def test_repository_concepts_link_seeded_sources(session):
     for name in ('fomento', 'simcc'):
         await seed_catalog(

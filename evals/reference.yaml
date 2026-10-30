@@ -355,6 +355,67 @@ questions:
             AND a.qualis = 'A1'
           GROUP BY b.modalidade
 
+  - id: artigos-durante-a-bolsa
+    question: >-
+      Quantos artigos de 2024 a 2026 foram publicados por bolsistas durante a
+      vigência de uma bolsa?
+    tags: [entre-fontes]
+    checks:
+      - type: sources
+        required: [fomento, simcc]
+      - type: numbers
+        values: [21, 99, 32856]
+      - type: judge
+        criterion: >-
+          Informa quantos bolsistas foram encontrados no Simcc, diz que a
+          comparação é por ano e que a vigência da bolsa não prova que ela
+          financiou os artigos.
+    verify:
+      - source: federated
+        sql: >-
+          SELECT COUNT(DISTINCT COALESCE(NULLIF(bp.doi, ''),
+            LOWER(bp.title) || '-' || CAST(bp.year_ AS TEXT))) AS artigos
+          FROM fomento.public.bolsas b
+          JOIN fomento.public.pesquisadores p ON p.id = b.pesquisador_id
+          JOIN simcc.public.researcher r ON r.lattes_id = p.lattes
+          JOIN simcc.public.bibliographic_production bp ON bp.researcher_id = r.id
+          WHERE b.status IN ('REGULAR', 'RESOLVIDA', 'PENDENTE_REVISAO')
+            AND bp.type = 'ARTICLE'
+            AND bp.year_ BETWEEN 2024 AND 2026
+            AND bp.year_ >= EXTRACT(YEAR FROM b.quando_iniciou)
+            AND (b.quando_terminou IS NULL
+              OR bp.year_ <= EXTRACT(YEAR FROM b.quando_terminou))
+
+  - id: todos-os-bolsistas-sem-limite
+    question: >-
+      Entre todos os bolsistas do fomento, quantos publicaram algum artigo
+      durante a bolsa?
+    tags: [entre-fontes]
+    checks:
+      - type: sources
+        required: [fomento, simcc]
+      - type: numbers
+        values: [32]
+      - type: judge
+        criterion: >-
+          Responde com o número total, sem alegar um limite de quantidade de
+          pesquisadores ou de currículos por consulta e sem pedir que o usuário
+          escolha pesquisadores. Informar a cobertura, como quantos bolsistas
+          foram encontrados no Simcc, é correto e não é alegar limite.
+    verify:
+      - source: federated
+        sql: >-
+          SELECT COUNT(DISTINCT p.id) AS bolsistas
+          FROM fomento.public.bolsas b
+          JOIN fomento.public.pesquisadores p ON p.id = b.pesquisador_id
+          JOIN simcc.public.researcher r ON r.lattes_id = p.lattes
+          JOIN simcc.public.bibliographic_production bp ON bp.researcher_id = r.id
+          WHERE b.status IN ('REGULAR', 'RESOLVIDA', 'PENDENTE_REVISAO')
+            AND bp.type = 'ARTICLE'
+            AND bp.year_ >= EXTRACT(YEAR FROM b.quando_iniciou)
+            AND (b.quando_terminou IS NULL
+              OR bp.year_ <= EXTRACT(YEAR FROM b.quando_terminou))
+
   - id: somar-instituicoes-das-fontes
     question: Quantas instituições existem somando o fomento e o Simcc, sem repetir?
     tags: [entre-fontes, issue-2]

@@ -363,6 +363,17 @@ def render_source_links(
         '(por exemplo, "1 dos 19 bolsistas está no Simcc") e nunca apresente '
         'um total parcial como completo. Com `available` falso, diga que a '
         'cobertura não pôde ser calculada.',
+        '',
+        'O limite de linhas vale só para o que a consulta devolve: o '
+        'cruzamento percorre todos os registros, e não há limite de '
+        'pesquisadores. Para perguntas sobre um grupo inteiro, agregue com '
+        'COUNT ou GROUP BY e nunca peça ao usuário que escolha pesquisadores '
+        'por causa do limite.',
+        '',
+        'Junto da ligação, a consulta pode comparar datas e números das duas '
+        'fontes com `>`, `>=`, `<`, `<=` e `BETWEEN`, por exemplo para ver se '
+        'algo ocorreu dentro de um período. Escreva essas consultas sem CTE '
+        'nem subconsulta, para que a cobertura possa ser calculada.',
     ]
     return '\n'.join(lines) + '\n'
 

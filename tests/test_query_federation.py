@@ -46,6 +46,11 @@ def urls(tmp_path):
             CREATE TABLE pesquisadores (
                 id INTEGER, lattes TEXT, modalidade TEXT
             );
+            CREATE TABLE bolsas (
+                pesquisador_id INTEGER, inicio DATE, fim DATE
+            );
+            INSERT INTO bolsas VALUES
+                (1, '2023-03-01', '2024-02-28'), (2, '2023-03-01', NULL);
             INSERT INTO pesquisadores VALUES
                 (1, 'L1', 'Doutorado'), (2, 'L2', 'Doutorado'),
                 (3, 'L3', 'Mestrado'), (4, NULL, 'Mestrado');
@@ -56,6 +61,9 @@ def urls(tmp_path):
             """
             CREATE TABLE researcher (lattes_id TEXT, artigos INTEGER);
             INSERT INTO researcher VALUES ('L1', 5), ('L3', 2), ('L9', 7);
+            CREATE TABLE artigos (lattes_id TEXT, ano INTEGER);
+            INSERT INTO artigos VALUES
+                ('L1', 2022), ('L1', 2023), ('L1', 2024), ('L1', 2025);
             """
         )
     return {
@@ -101,6 +109,24 @@ async def test_join_and_aggregate_between_sources(urls):
         'keys': 3,
         'found': 2,
     }
+
+
+@integration
+async def test_period_comparison_between_sources(urls):
+    sql = (
+        'SELECT COUNT(*) AS artigos FROM fomento.main.bolsas b '
+        'JOIN fomento.main.pesquisadores p ON p.id = b.pesquisador_id '
+        'JOIN simcc.main.artigos a ON a.lattes_id = p.lattes '
+        'WHERE a.ano >= EXTRACT(YEAR FROM b.inicio) '
+        'AND (b.fim IS NULL OR a.ano <= EXTRACT(YEAR FROM b.fim))'
+    )
+
+    result = await execute_federated_query(
+        query(sql), urls, FederationLimits()
+    )
+
+    assert result.rows == [[2]]
+    assert (result.coverage['keys'], result.coverage['found']) == (3, 2)
 
 
 @integration

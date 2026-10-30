@@ -74,6 +74,11 @@ def schema(links=None):
                         column('pesquisador_id'),
                         column('modalidade'),
                         column('cep', access='aggregate'),
+                        column('quando_iniciou', data_type='DATE'),
+                        column(
+                            'quando_terminou',
+                            data_type='TIMESTAMP WITHOUT TIME ZONE',
+                        ),
                     ),
                     entity('fomento', 'instituicoes', column('nome')),
                     entity('fomento', 'tabela', column('cep')),
@@ -97,6 +102,14 @@ def schema(links=None):
                     ),
                     entity('simcc', 'institution', column('name')),
                     entity('simcc', 'tabela', column('cep')),
+                    entity(
+                        'simcc',
+                        'bibliographic_production',
+                        column('id'),
+                        column('researcher_id'),
+                        column('title'),
+                        column('year_', data_type='INTEGER'),
+                    ),
                 ],
             ),
         ],
@@ -239,6 +252,70 @@ def test_other_operator_between_sources_is_refused():
     )
 
 
+PERIOD = (
+    'SELECT COUNT(DISTINCT bp.id) AS artigos FROM fomento.public.bolsas b '
+    'JOIN fomento.public.pesquisadores p ON p.id = b.pesquisador_id '
+    'JOIN simcc.public.researcher r ON r.lattes_id = p.lattes '
+    'JOIN simcc.public.bibliographic_production bp ON bp.researcher_id = r.id '
+    'WHERE {}'
+)
+START_YEAR = 'EXTRACT(YEAR FROM b.quando_iniciou)'
+END_YEAR = 'EXTRACT(YEAR FROM b.quando_terminou)'
+
+
+@pytest.mark.parametrize(
+    'condition',
+    [
+        f'bp.year_ BETWEEN {START_YEAR} AND {END_YEAR}',
+        f'bp.year_ >= {START_YEAR}',
+        f'bp.year_ > {START_YEAR}',
+        f'bp.year_ <= {END_YEAR}',
+        f'bp.year_ < {END_YEAR}',
+        f'{START_YEAR} <= bp.year_',
+    ],
+)
+def test_order_comparison_by_link_is_accepted(condition):
+    result = validate_federated_query(PERIOD.format(condition), schema())
+
+    assert result.sources == ('fomento', 'simcc')
+
+
+def test_order_comparison_without_link_is_refused():
+    sql = (
+        'SELECT bp.id FROM fomento.public.bolsas b, '
+        'simcc.public.bibliographic_production bp '
+        f'WHERE bp.year_ >= {START_YEAR}'
+    )
+    refused(sql, 'ligações declaradas')
+
+
+@pytest.mark.parametrize(
+    'condition',
+    [
+        'bp.title < p.lattes',
+        'bp.year_ BETWEEN p.lattes AND b.quando_terminou',
+        f'bp.year_ <> {START_YEAR}',
+        f'bp.year_ = {START_YEAR}',
+        "bp.title LIKE p.lattes || '%'",
+    ],
+)
+def test_other_comparisons_with_link_are_refused(condition):
+    refused(PERIOD.format(condition), 'ligações declaradas')
+
+
+def test_column_without_recognized_type_is_not_orderable():
+    target = schema()
+    target.orderable_columns.discard(
+        ('simcc.public.bibliographic_production', 'year_')
+    )
+
+    refused(
+        PERIOD.format(f'bp.year_ >= {START_YEAR}'),
+        'ligações declaradas',
+        target,
+    )
+
+
 def test_union_without_link_is_refused():
     sql = (
         'SELECT id FROM fomento.public.pesquisadores '
@@ -279,6 +356,18 @@ def test_coverage_uses_only_filters_of_the_origin_source():
     assert 'IN (SELECT "lattes_id" FROM "simcc"."public"."researcher")' in (
         coverage.sql
     )
+
+
+def test_coverage_with_order_comparison_keeps_only_the_origin():
+    sql = PERIOD.format(
+        f"bp.year_ >= {START_YEAR} AND b.modalidade = 'Doutorado'"
+    )
+
+    coverage = validate_federated_query(sql, schema()).coverage
+
+    assert coverage is not None
+    assert "'Doutorado'" in coverage.sql
+    assert 'year_' not in coverage.sql
 
 
 def test_coverage_is_null_with_cte():

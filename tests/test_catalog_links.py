@@ -241,6 +241,15 @@ def test_active_link_is_in_context():
     ) in text
 
 
+def test_row_limit_and_order_comparison_are_explained():
+    text = render_source_links([resolved()], SOURCES)
+
+    assert 'não há limite de pesquisadores' in text
+    assert 'agregue com COUNT ou GROUP BY' in text
+    assert '`BETWEEN`' in text
+    assert 'sem CTE' in text
+
+
 def test_inactive_link_is_not_in_context():
     assert not render_source_links([resolved(active=False)], SOURCES)
 

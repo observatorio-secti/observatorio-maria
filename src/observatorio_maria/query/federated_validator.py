@@ -45,6 +45,19 @@ COMPARISONS = (
     exp.In,
     exp.Between,
 )
+ORDER_COMPARISONS = (exp.GT, exp.GTE, exp.LT, exp.LTE, exp.Between)
+ORDERABLE_TYPES = (
+    'bigint',
+    'date',
+    'decimal',
+    'double',
+    'float',
+    'int',
+    'numeric',
+    'real',
+    'smallint',
+    'time',
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +72,7 @@ class FederatedSchema:
     reference_only_tables: set[str] = field(default_factory=set)
     aggregate_columns: set[tuple[str, str]] = field(default_factory=set)
     searchable_columns: set[tuple[str, str]] = field(default_factory=set)
+    orderable_columns: set[tuple[str, str]] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -88,6 +102,7 @@ def build_federated_schema(
     reference_only: set[str] = set()
     aggregate: set[tuple[str, str]] = set()
     searchable: set[tuple[str, str]] = set()
+    orderable: set[tuple[str, str]] = set()
 
     for datasource, entities in sources:
         for entity in entities:
@@ -108,6 +123,10 @@ def build_federated_schema(
                     aggregate.add((key, name))
                 if column.searchable:
                     searchable.add((key, name))
+                if (column.data_type or '').lower().startswith(
+                    ORDERABLE_TYPES
+                ):
+                    orderable.add((key, name))
             schemas = tables.setdefault(datasource.id.lower(), {})
             schemas.setdefault(entity.schema_name.lower(), {})[
                 entity.name.lower()
@@ -122,6 +141,7 @@ def build_federated_schema(
         reference_only_tables=reference_only,
         aggregate_columns=aggregate,
         searchable_columns=searchable,
+        orderable_columns=orderable,
     )
 
 
@@ -250,7 +270,8 @@ def _check_cross_source(  # noqa: C901
     schema: FederatedSchema,
     sources: dict[str, Any],
 ) -> ResolvedLink:
-    """Toda comparação entre fontes precisa ser uma ligação ativa."""
+    """Comparações entre fontes usam uma ligação ativa ou, junto dela,
+    comparam a ordem de datas e números."""
     used: list[ResolvedLink] = []
     refusal = (
         'Fontes diferentes só se juntam por ligações declaradas no '
@@ -270,8 +291,11 @@ def _check_cross_source(  # noqa: C901
         else:
             columns = _comparison_columns(node)
             origins = [_column_origin(c, sources) for c in columns]
-            catalogs = {_catalog(o) for o in origins if o}
-            if len(catalogs) > 1:
+            known = [o for o in origins if o]
+            if len({_catalog(o) for o in known}) > 1 and not (
+                isinstance(node, ORDER_COMPARISONS)
+                and schema.orderable_columns.issuperset(known)
+            ):
                 raise QueryValidationError(refusal)
             continue
         origins = [_column_origin(c, sources) for c in pair]
