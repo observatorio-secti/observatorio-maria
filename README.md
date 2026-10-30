@@ -263,6 +263,8 @@ O corpo de envio aceita **somente** `content` (1 a 10.000 caracteres). Campos ex
 
 Hoje a Maria produz blocos `text`, `chart` e `table` a partir de consultas a fontes de dados ativas do catálogo.
 
+O bloco `text` vem primeiro e explica as visualizações: o que mostram, o principal destaque e as ressalvas. Depois de pedir gráficos e tabelas, o modelo é chamado mais uma vez, sem ferramentas, para escrever essa explicação, e a última chamada do orçamento também é sem ferramentas. Uma resposta só com `chart` ou `table` é aceita como exceção, quando o modelo não devolve texto.
+
 ### Streaming (Server-Sent Events)
 
 `POST /conversations/{id}/messages/stream` emite os eventos nesta ordem:

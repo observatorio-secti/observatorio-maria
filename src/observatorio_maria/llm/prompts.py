@@ -53,9 +53,21 @@ TOOL_RULES_PROMPT = (
     'consultáveis, responda a parte possível e declare explicitamente o que '
     'não pôde ser consultado e por quê.\n'
     '- Apresentação: quando fizer sentido ilustrar os dados, use show_chart '
-    'ou show_table referenciando o result_id da consulta correspondente.\n'
-    '- Durante etapas de consulta a dados, evite produzir texto preliminar, '
-    'reservando o texto para a resposta final ao usuário.'
+    'ou show_table referenciando o result_id da consulta correspondente. '
+    'Quando calls_left chegar a 2, não faça novas consultas: apresente o que '
+    'já tem.\n'
+    '- Explicação: toda visualização vem com um texto que diz o que ela '
+    'mostra, o principal destaque e as ressalvas, usando só números dos '
+    'resultados.\n'
+    '- Durante etapas de consulta a dados e na chamada que pede show_chart '
+    'ou show_table, não produza texto: você escreverá a resposta final ao '
+    'usuário depois.'
+)
+
+EXPLANATION_PROMPT = (
+    'Os gráficos e tabelas pedidos já estão visíveis para o usuário, logo '
+    'abaixo do seu texto. Escreva agora a explicação do que eles mostram, '
+    'sem repetir o que você já escreveu nesta resposta.'
 )
 
 

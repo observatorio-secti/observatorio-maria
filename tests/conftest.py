@@ -101,6 +101,7 @@ class ScriptedToolChatModel(BaseChatModel):
 
     responses: list[AIMessage]
     bound_tools: list = []
+    bind_count: int = 0
     recorded_calls: list[list[BaseMessage]] = []
 
     @property
@@ -109,6 +110,7 @@ class ScriptedToolChatModel(BaseChatModel):
 
     def bind_tools(self, tools, **kwargs):
         self.bound_tools = list(tools)
+        self.bind_count += 1
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
@@ -140,7 +142,7 @@ class ScriptedToolChatModel(BaseChatModel):
                 )
             )
         else:
-            for char in msg.content:
+            for char in msg.content or ['']:
                 yield ChatGenerationChunk(message=AIMessageChunk(content=char))
 
 

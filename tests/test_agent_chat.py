@@ -7,14 +7,17 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pytest
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from pydantic import ValidationError
 from sqlalchemy import select
 
 from observatorio_maria.app import app
 from observatorio_maria.catalog.context import render_context
 from observatorio_maria.catalog.sync import load_entities, load_relationships
-from observatorio_maria.llm.prompts import build_system_prompt
+from observatorio_maria.llm.prompts import (
+    EXPLANATION_PROMPT,
+    build_system_prompt,
+)
 from observatorio_maria.llm.registry import (
     ModelRegistry,
     ModelTier,
@@ -539,7 +542,7 @@ async def test_server_populates_chart_and_table_blocks(
 
     # Ordem: texto, depois gráfico, depois tabela
     assert blocks[0]['type'] == 'text'
-    assert blocks[0]['text'] == 'Veja o resumo a seguir:'
+    assert blocks[0]['text'] == 'Veja o resumo a seguir:\n\nFim'
 
     assert blocks[1]['type'] == 'chart'
     assert blocks[1]['title'] == 'Orçamento por Ano'
@@ -1005,3 +1008,237 @@ def test_tool_rules_have_no_research_theme():
 
     assert 'dengue' not in prompt.lower()
     assert 'arbovirose' not in prompt.lower()
+
+
+def _chart_turn(text='', series='orcamento', call_id='g1'):
+    return AIMessage(
+        content=text,
+        tool_calls=[
+            {
+                'name': 'show_chart',
+                'args': {
+                    'result_id': 'r1',
+                    'chart_type': 'bar',
+                    'title': 'Orçamento por Ano',
+                    'x': 'ano',
+                    'series': [series],
+                },
+                'id': call_id,
+            }
+        ],
+    )
+
+
+def _table_turn():
+    return AIMessage(
+        content='',
+        tool_calls=[
+            {
+                'name': 'show_table',
+                'args': {'result_id': 'r1', 'columns': ['ano']},
+                'id': 't1',
+            }
+        ],
+    )
+
+
+def _chart_query_turn():
+    return AIMessage(
+        content='',
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {
+                    'source': 'fomento',
+                    'sql': 'SELECT ano, orcamento FROM projetos',
+                },
+                'id': 'q1',
+            }
+        ],
+    )
+
+
+def _explanation_prompts(call):
+    return [
+        m
+        for m in call
+        if isinstance(m, SystemMessage) and m.content == EXPLANATION_PROMPT
+    ]
+
+
+async def _ask(client, conversation, content='Mostre o orçamento'):
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/messages',
+        json={'content': content},
+    )
+    assert res.status_code == HTTPStatus.CREATED
+    return res.json()['assistant_message']['content']
+
+
+@pytest.mark.asyncio
+async def test_chart_without_text_gets_explanation_call_without_tools(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    model = ScriptedToolChatModel(
+        responses=[
+            _chart_query_turn(),
+            _chart_turn(),
+            AIMessage('O orçamento cresceu em 2025.'),
+        ]
+    )
+    set_test_model(model)
+
+    blocks = await _ask(client, conversation)
+
+    assert [b['type'] for b in blocks] == ['text', 'chart']
+    assert blocks[0]['text'] == 'O orçamento cresceu em 2025.'
+    assert len(model.recorded_calls) == 3  # noqa: PLR2004
+    # Só as duas primeiras chamadas recebem ferramentas.
+    assert model.bind_count == 2  # noqa: PLR2004
+    assert len(_explanation_prompts(model.recorded_calls[2])) == 1
+    assert _explanation_prompts(model.recorded_calls[1]) == []
+
+
+@pytest.mark.asyncio
+async def test_table_without_text_gets_explanation(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    model = ScriptedToolChatModel(
+        responses=[
+            _chart_query_turn(),
+            _table_turn(),
+            AIMessage('A tabela lista os anos.'),
+        ]
+    )
+    set_test_model(model)
+
+    blocks = await _ask(client, conversation)
+
+    assert [b['type'] for b in blocks] == ['text', 'table']
+    assert blocks[0]['text'] == 'A tabela lista os anos.'
+
+
+@pytest.mark.asyncio
+async def test_text_of_different_calls_is_separated_in_streaming(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    model = ScriptedToolChatModel(
+        responses=[
+            _chart_query_turn(),
+            _chart_turn(text='Veja o gráfico.'),
+            AIMessage('O destaque é 2025.'),
+        ]
+    )
+    set_test_model(model)
+
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/messages/stream',
+        json={'content': 'Mostre o orçamento'},
+    )
+
+    events = parse_sse(res.text)
+    streamed = ''.join(
+        data.get('text') or ''
+        for name, data in events
+        if name == 'content.delta'
+    )
+    expected = 'Veja o gráfico.\n\nO destaque é 2025.'
+    assert streamed == expected
+    assert events[-1][1]['content'][0]['text'] == expected
+    assert len(_explanation_prompts(model.recorded_calls[2])) == 1
+
+
+@pytest.mark.asyncio
+async def test_chart_on_penultimate_call_is_explained_on_last_call(
+    client, session, conversation, fomento_source, monkeypatch
+):
+    monkeypatch.setenv('MARIA_AGENT_MAX_MODEL_CALLS', '3')
+    await setup_catalog(session, fomento_source)
+    model = ScriptedToolChatModel(
+        responses=[
+            _chart_query_turn(),
+            _chart_turn(),
+            AIMessage('Explicação final.'),
+        ]
+    )
+    set_test_model(model)
+
+    blocks = await _ask(client, conversation)
+
+    assert [b['type'] for b in blocks] == ['text', 'chart']
+    assert model.bind_count == 2  # noqa: PLR2004
+    assert len(_last_call_warnings(model.recorded_calls[2])) == 1
+
+
+@pytest.mark.asyncio
+async def test_last_call_has_no_tools(
+    client, session, conversation, fomento_source, monkeypatch
+):
+    monkeypatch.setenv('MARIA_AGENT_MAX_MODEL_CALLS', '2')
+    await setup_catalog(session, fomento_source)
+    model = ScriptedToolChatModel(
+        responses=[_chart_query_turn(), AIMessage('Só em texto.')]
+    )
+    set_test_model(model)
+
+    blocks = await _ask(client, conversation)
+
+    assert [b['type'] for b in blocks] == ['text']
+    assert model.bind_count == 1
+
+
+@pytest.mark.asyncio
+async def test_empty_explanation_keeps_only_the_blocks(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    model = ScriptedToolChatModel(
+        responses=[_chart_query_turn(), _chart_turn(), AIMessage('')]
+    )
+    set_test_model(model)
+
+    blocks = await _ask(client, conversation)
+
+    assert [b['type'] for b in blocks] == ['chart']
+
+
+@pytest.mark.asyncio
+async def test_refused_chart_returns_reason_and_keeps_tools(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    model = ScriptedToolChatModel(
+        responses=[
+            _chart_query_turn(),
+            _chart_turn(series='inexistente', call_id='g1'),
+            _chart_turn(call_id='g2'),
+            AIMessage('Agora com a coluna certa.'),
+        ]
+    )
+    set_test_model(model)
+
+    blocks = await _ask(client, conversation)
+
+    assert [b['type'] for b in blocks] == ['text', 'chart']
+    assert len(blocks[1]['series']) == 1
+    reasons = [
+        m.content
+        for m in model.recorded_calls[2]
+        if isinstance(m, ToolMessage) and m.tool_call_id == 'g1'
+    ]
+    assert len(reasons) == 1
+    assert 'inexistente' in reasons[0]
+    # A chamada da correção mantém as ferramentas; a da explicação, não.
+    assert model.bind_count == 3  # noqa: PLR2004
+
+
+def test_tool_rules_ask_for_explanation_of_visualizations():
+    prompt = build_system_prompt(source_contexts=['## Fonte'])
+
+    assert 'o que ela mostra' in prompt
+    assert 'principal destaque' in prompt
+    assert 'na chamada que pede show_chart' in prompt
+    assert 'calls_left chegar a 2' in prompt

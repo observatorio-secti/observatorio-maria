@@ -549,23 +549,6 @@ class QueryRunner:
             ),
         ]
 
-    def build_presentation_tools(self) -> list[StructuredTool]:
-        """Apenas ferramentas de apresentação."""
-        return [
-            StructuredTool.from_function(
-                func=self.show_chart,
-                name='show_chart',
-                description='Gera um gráfico a partir de um result_id.',
-                args_schema=ShowChartInput,
-            ),
-            StructuredTool.from_function(
-                func=self.show_table,
-                name='show_table',
-                description='Gera uma tabela a partir de um result_id.',
-                args_schema=ShowTableInput,
-            ),
-        ]
-
     async def close(self) -> None:
         """Descarta engines abertos."""
         for engine in self._engines.values():

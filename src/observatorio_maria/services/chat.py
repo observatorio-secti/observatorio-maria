@@ -34,7 +34,10 @@ from observatorio_maria.catalog.sync import (
     load_relationships,
 )
 from observatorio_maria.database import get_session
-from observatorio_maria.llm.prompts import build_system_prompt
+from observatorio_maria.llm.prompts import (
+    EXPLANATION_PROMPT,
+    build_system_prompt,
+)
 from observatorio_maria.llm.registry import (
     ModelRegistry,
     ModelTier,
@@ -394,9 +397,6 @@ class ChatService:
             if has_sources
             else []
         )
-        presentation_tools = (
-            query_runner.build_presentation_tools() if has_sources else []
-        )
 
         messages: list[BaseMessage] = [
             SystemMessage(system_prompt),
@@ -413,6 +413,7 @@ class ChatService:
 
         accumulated_text = ''
         call_count = 0
+        text_only = False
         token_tracker = _TokenUsageTracker()
 
         try:
@@ -423,6 +424,8 @@ class ChatService:
                 query_runner.reset_call_budget(calls_left=calls_left)
 
                 turn_messages = list(messages)
+                if text_only:
+                    turn_messages.append(SystemMessage(EXPLANATION_PROMPT))
                 if is_last_call and has_sources and call_count > 1:
                     turn_messages.append(
                         SystemMessage(
@@ -431,20 +434,15 @@ class ChatService:
                         )
                     )
 
-                if not has_sources:
-                    active_model = registered.model
-                elif is_last_call:
-                    active_model = (
-                        registered.model.bind_tools(presentation_tools)
-                        if hasattr(registered.model, 'bind_tools')
-                        else registered.model
-                    )
+                if (
+                    has_sources
+                    and not is_last_call
+                    and not text_only
+                    and hasattr(registered.model, 'bind_tools')
+                ):
+                    active_model = registered.model.bind_tools(query_tools)
                 else:
-                    active_model = (
-                        registered.model.bind_tools(query_tools)
-                        if hasattr(registered.model, 'bind_tools')
-                        else registered.model
-                    )
+                    active_model = registered.model
 
                 step = _ModelStep(
                     span,
@@ -459,16 +457,17 @@ class ChatService:
                 )
 
                 turn_chunk: AIMessageChunk | None = None
+                separator = '\n\n' if accumulated_text else ''
                 try:
                     while (chunk := await step.next_chunk()) is not None:
                         turn_chunk = (
                             chunk if turn_chunk is None else turn_chunk + chunk
                         )
                         if chunk.text:
-                            accumulated_text += chunk.text
-                            yield ContentDelta(
-                                index=0, text=chunk.text, type='text'
-                            )
+                            text = separator + chunk.text
+                            separator = ''
+                            accumulated_text += text
+                            yield ContentDelta(index=0, text=text, type='text')
                 except ModelInvocationError:
                     span.end()
                     raise
@@ -493,6 +492,7 @@ class ChatService:
                 has_query = any(
                     tc.get('name') in QUERY_TOOLS for tc in tool_calls
                 )
+                blocks_before = len(query_runner.pending_blocks)
                 for tc in tool_calls:
                     tool_msg, activity = await self._execute_tool_call(
                         tc, query_runner, span, session_id
@@ -501,8 +501,10 @@ class ChatService:
                         yield activity
                     messages.append(tool_msg)
 
-                if not has_query:
-                    break
+                # Com a apresentação aceita, falta só a explicação. Recusas
+                # seguem com as ferramentas, para o modelo corrigir o pedido.
+                blocks_added = len(query_runner.pending_blocks) - blocks_before
+                text_only = not has_query and blocks_added == len(tool_calls)
         finally:
             await query_runner.close()
 
