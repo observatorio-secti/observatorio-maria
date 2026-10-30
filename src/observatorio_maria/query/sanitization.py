@@ -24,6 +24,17 @@ def mask_pii(text: str) -> str:
     return EMAIL_PATTERN.sub('[E-MAIL MASCARADO]', text)
 
 
+def mask_value(val: Any) -> Any:
+    """Mascara PII em strings, inclusive dentro de listas e objetos."""
+    if isinstance(val, str):
+        return mask_pii(val)
+    if isinstance(val, list):
+        return [mask_value(item) for item in val]
+    if isinstance(val, dict):
+        return {mask_pii(key): mask_value(item) for key, item in val.items()}
+    return val
+
+
 def escape_quarantine_delimiters(text: str) -> str:
     """Escapa tags que simulam fechamento ou abertura da quarentena."""
     return DELIMITER_TAG_PATTERN.sub(r'&lt;\1&gt;', text)
@@ -38,6 +49,13 @@ def truncate_cell_text(text: str, max_length: int = MAX_CELL_LENGTH) -> str:
 
 def sanitize_untrusted_text(val: Any) -> Any:
     """Aplica mascaramento de PII, escape de tags e truncamento em strings."""
+    if isinstance(val, list):
+        return [sanitize_untrusted_text(item) for item in val]
+    if isinstance(val, dict):
+        return {
+            sanitize_untrusted_text(key): sanitize_untrusted_text(item)
+            for key, item in val.items()
+        }
     if not isinstance(val, str):
         return val
 

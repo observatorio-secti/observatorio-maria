@@ -2137,3 +2137,176 @@ async def test_answer_without_markers_keeps_text_then_blocks(
 
 def test_explanation_prompt_describes_the_marker():
     assert '[[bloco:N]]' in EXPLANATION_PROMPT
+
+
+CPF = '123.456.789-00'
+EMAIL = 'pesquisadora@alvo.org'
+
+
+def _insert_project(source_env: str, resumo: str) -> None:
+    db_path = os.environ[source_env].replace('sqlite+aiosqlite:///', '')
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            'INSERT INTO projetos (id, nome, resumo, ano, orcamento) '
+            "VALUES (99, 'Infiltrado', ?, 2024, 100.0)",
+            (resumo,),
+        )
+
+
+def _show_project_turns(*presentation) -> list[AIMessage]:
+    query = {
+        'name': 'query_data',
+        'args': {
+            'source': 'fomento',
+            'sql': 'SELECT nome, resumo, orcamento FROM projetos '
+            'WHERE id = 99',
+        },
+        'id': 'q',
+    }
+    return [
+        AIMessage(content='', tool_calls=[query]),
+        AIMessage(
+            content='',
+            tool_calls=[
+                {'name': name, 'args': args, 'id': f'p{index}'}
+                for index, (name, args) in enumerate(presentation)
+            ],
+        ),
+        AIMessage('Pronto.'),
+    ]
+
+
+async def _stream(client, conversation) -> list[tuple[str, dict]]:
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/messages/stream',
+        json={'content': 'Mostre o projeto 99'},
+    )
+    assert res.status_code == HTTPStatus.OK
+    return parse_sse(res.text)
+
+
+@pytest.mark.asyncio
+async def test_blocks_are_masked_in_every_output(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    _insert_project(fomento_source, f'CPF {CPF}, contato {EMAIL}')
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=_show_project_turns(
+                (
+                    'show_table',
+                    {
+                        'result_id': 'r1',
+                        'columns': ['resumo'],
+                        'title': f'Dados de {EMAIL}',
+                        'labels': {'resumo': f'Resumo de {CPF}'},
+                    },
+                ),
+                (
+                    'show_chart',
+                    {
+                        'result_id': 'r1',
+                        'chart_type': 'bar',
+                        'title': 'Orçamento',
+                        'x': 'resumo',
+                        'series': ['orcamento'],
+                    },
+                ),
+            )
+        )
+    )
+
+    events = await _stream(client, conversation)
+
+    deltas = [data for name, data in events if name == 'content.delta']
+    table = next(d['block'] for d in deltas if d['type'] == 'table')
+    chart = next(d['block'] for d in deltas if d['type'] == 'chart')
+    masked = 'CPF [CPF MASCARADO], contato [E-MAIL MASCARADO]'
+    assert table['rows'] == [{'resumo': masked}]
+    assert table['title'] == 'Dados de [E-MAIL MASCARADO]'
+    assert table['columns'][0]['label'] == 'Resumo de [CPF MASCARADO]'
+    assert chart['data'] == [{'resumo': masked, 'orcamento': 100.0}]
+
+    stored = await session.scalar(
+        select(Message).where(Message.role == MessageRole.ASSISTANT)
+    )
+    read = await client.get(f'/conversations/{conversation["id"]}/messages')
+    outputs = [json.dumps(stored.content), json.dumps(events), read.text]
+    for output in outputs:
+        assert CPF not in output
+        assert EMAIL not in output
+        assert 'MASCARADO' in output
+
+
+@pytest.mark.asyncio
+async def test_block_mask_keeps_long_text_whole(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    long_text = '<b> ' + 'x' * 5000
+    _insert_project(fomento_source, f'{CPF} {long_text}')
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=_show_project_turns((
+                'show_table',
+                {'result_id': 'r1', 'columns': ['resumo']},
+            ))
+        )
+    )
+
+    blocks = await _ask(client, conversation)
+
+    table = next(b for b in blocks if b['type'] == 'table')
+    assert table['rows'] == [{'resumo': f'[CPF MASCARADO] {long_text}'}]
+
+
+async def _old_table_with_cpf(session, conversation) -> None:
+    session.add(
+        Message(
+            conversation_id=UUID(conversation['id']),
+            role=MessageRole.ASSISTANT,
+            content=[
+                {
+                    'type': 'table',
+                    'title': 'Antiga',
+                    'columns': [{'key': 'resumo', 'label': 'Resumo'}],
+                    'rows': [{'resumo': f'CPF {CPF}'}],
+                }
+            ],
+        )
+    )
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_old_message_is_read_as_stored(client, session, conversation):
+    await _old_table_with_cpf(session, conversation)
+
+    read = await client.get(f'/conversations/{conversation["id"]}/messages')
+
+    table = read.json()['messages'][0]['content'][0]
+    assert table['rows'] == [{'resumo': f'CPF {CPF}'}]
+
+
+@pytest.mark.asyncio
+async def test_old_block_shown_again_comes_out_masked(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    await _old_table_with_cpf(session, conversation)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[
+                _reuse_turn(
+                    {'result_id': 'h1', 'columns': ['resumo']}, 'show_table'
+                ),
+                AIMessage('De novo.'),
+            ]
+        )
+    )
+
+    blocks = await _ask(client, conversation, 'Mostre de novo')
+
+    table = next(b for b in blocks if b['type'] == 'table')
+    assert table['rows'] == [{'resumo': 'CPF [CPF MASCARADO]'}]

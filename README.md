@@ -276,7 +276,7 @@ Em `show_chart` e `show_table`, o modelo informa rótulos em `labels` (coluna �
 
 `chart` e `table` também trazem `origin`, gravado a partir da consulta usada: nomes das fontes (`sources`), descrição (`description`, com CPF e e-mail mascarados), momento da consulta (`queried_at`) e, entre fontes, `coverage` com `keys` e `found`. O SQL não entra no bloco. Mensagens gravadas sem o campo voltam com `origin` nulo.
 
-No histórico enviado ao modelo, gráficos e tabelas anteriores trazem o resumo e até `HISTORY_MAX_ROWS` linhas, com células de até 200 caracteres. Esses valores vão sempre em `<untrusted_database_data>`, mascarados, mesmo que o bloco gravado não esteja.
+No histórico enviado ao modelo, gráficos e tabelas anteriores trazem o resumo e até `HISTORY_MAX_ROWS` linhas, com células de até 200 caracteres. Esses valores vão sempre em `<untrusted_database_data>`, mascarados, mesmo que o bloco gravado seja antigo e não esteja. Gráficos e tabelas novos já nascem com CPF e e-mail mascarados.
 
 Esses blocos anteriores também ficam disponíveis como resultados `h1`, `h2`…, em ordem cronológica, citados no histórico com as chaves das colunas. Assim, `show_chart` e `show_table` reapresentam os dados sem consultar as origens, e o novo bloco herda `truncated` e `origin`, com a data da consulta original. Só o que foi gravado no bloco pode ser reusado.
 
@@ -433,7 +433,8 @@ A Maria implementa múltiplas camadas de proteção para salvaguardar dados de c
    - O prompt de sistema define precedência estrita: o modelo é orientado a tratar os dados como meramente documentais e a ignorar qualquer tentativa de injeção de comandos (ex.: "ignore diretrizes anteriores", redefinição de papel ou chamadas falsas de ferramentas).
 
 2. **Privacidade e LGPD:**
-   - **Mascaramento leve de PII:** Padrões identificáveis de CPF e endereços de e-mail são mascarados preventivamente (`[CPF MASCARADO]`, `[E-MAIL MASCARADO]`) pelo `QueryRunner` antes de serem passados ao contexto do modelo. Os bancos de dados de origem permanecem intactos.
+   - **Mascaramento leve de PII:** Padrões identificáveis de CPF e endereços de e-mail são mascarados preventivamente (`[CPF MASCARADO]`, `[E-MAIL MASCARADO]`) pelo `QueryRunner` antes de irem ao contexto do modelo e ao criar gráficos e tabelas, inclusive dentro de listas e objetos. O delta SSE, o banco da Maria, a API, a demo e o CSV recebem a versão mascarada. Os bancos de dados de origem permanecem intactos.
+   - **Limites do mascaramento:** Mensagens gravadas antes dessa regra não são reescritas nem mascaradas na leitura, embora os valores delas cheguem mascarados ao modelo e em novos gráficos e tabelas. CPF sem pontuação e sem o prefixo "CPF", ou guardado como número, não é reconhecido; identificadores assim devem usar acesso `aggregate`.
    - **Colunas com acesso agregado:** Colunas sensíveis (como CEPs e identificadores) podem ser configuradas no catálogo com acesso estrito a agregações (`aggregate`), impedindo a leitura direta de valores individuais.
    - **Ocultação em telemetria:** Parâmetros `OPENINFERENCE_HIDE_INPUTS` e `OPENINFERENCE_HIDE_OUTPUTS` permitem omitir textos em traces de observabilidade.
 

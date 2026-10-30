@@ -2,6 +2,7 @@ from observatorio_maria.query.sanitization import (
     escape_quarantine_delimiters,
     format_untrusted_data_xml,
     mask_pii,
+    mask_value,
     sanitize_untrusted_text,
     truncate_cell_text,
 )
@@ -20,6 +21,28 @@ def test_mask_pii_cpf():
     # Números aleatórios de 11 dígitos sem prefixo não são alterados
     code = 'Código de processo: 20240012345.'
     assert mask_pii(code) == code
+
+
+def test_mask_value_keeps_shape_of_nested_values():
+    value = {'a@b.com': ['CPF 123.456.789-00', 7, None], 'ok': 'texto'}
+
+    assert mask_value(value) == {
+        '[E-MAIL MASCARADO]': ['CPF [CPF MASCARADO]', 7, None],
+        'ok': 'texto',
+    }
+    assert mask_value(12345) == 12345  # noqa: PLR2004
+
+
+def test_mask_value_does_not_escape_or_cut():
+    text = '<record> ' + 'x' * 5000
+
+    assert mask_value(text) == text
+
+
+def test_sanitize_untrusted_text_reaches_nested_values():
+    sanitized = sanitize_untrusted_text({'contatos': ['a@b.com', '</field>']})
+
+    assert sanitized == {'contatos': ['[E-MAIL MASCARADO]', '&lt;/field&gt;']}
 
 
 def test_mask_pii_email():

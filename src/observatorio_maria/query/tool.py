@@ -37,6 +37,7 @@ from observatorio_maria.query.federation import (
 )
 from observatorio_maria.query.sanitization import (
     format_untrusted_data_xml,
+    mask_value,
     sanitize_untrusted_text,
 )
 from observatorio_maria.query.validator import (
@@ -542,7 +543,7 @@ class QueryRunner:
             'truncated': result.truncated,
             'origin': result.origin,
         }
-        self.pending_blocks.append(chart_block)
+        self.pending_blocks.append(mask_value(chart_block))
         return {'status': 'ok', 'block_index': len(self.pending_blocks)}
 
     def show_table(
@@ -584,7 +585,7 @@ class QueryRunner:
             'truncated': result.truncated,
             'origin': result.origin,
         }
-        self.pending_blocks.append(table_block)
+        self.pending_blocks.append(mask_value(table_block))
         return {'status': 'ok', 'block_index': len(self.pending_blocks)}
 
     def build_query_tools(
