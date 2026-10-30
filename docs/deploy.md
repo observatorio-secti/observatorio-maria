@@ -111,6 +111,8 @@ OTEL_SDK_DISABLED=true   # a menos que a stack de observabilidade esteja no ar
 DEMO_ENABLED=false       # não expõe /demo/
 ```
 
+**Nomes de host.** Se o banco de leitura do Simcc estiver em outra rede ou com outro nome, aponte `SIMCC_NETWORK` e `SIMCC_DATABASE_URL` para ele. Quando as duas redes tiverem um serviço chamado `db`, o nome fica ambíguo para a `maria-api`, que está nas duas. Use nesse caso o nome do container nas duas URLs, por exemplo `@modulo-fomento-db-1:5432/...` e `@observatorio-db-1:5432/observatorio`.
+
 O `DATABASE_URL` do `.env` é ignorado: o `compose.prod.yaml` o sobrescreve para apontar para o SQLite no volume (`sqlite+aiosqlite:////app/data/maria.db`).
 
 ### 5. Subir
