@@ -1374,3 +1374,80 @@ def test_tool_rules_ask_for_readable_labels_and_real_units():
 
     assert 'nomes legíveis em português' in prompt
     assert 'nunca invente unidades' in prompt
+
+
+def _both_blocks_turn():
+    chart = _labeled_chart_turn({}).tool_calls[0]
+    table = _table_turn().tool_calls[0]
+    return AIMessage(content='', tool_calls=[chart, table])
+
+
+@pytest.mark.asyncio
+async def test_blocks_are_marked_when_result_is_truncated(
+    client, session, conversation, fomento_source, monkeypatch
+):
+    monkeypatch.setenv('QUERY_MAX_ROWS', '2')
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[_chart_query_turn(), _both_blocks_turn()]
+        )
+    )
+
+    blocks = await _ask(client, conversation)
+
+    chart = next(b for b in blocks if b['type'] == 'chart')
+    table = next(b for b in blocks if b['type'] == 'table')
+    assert chart['truncated'] is True
+    assert table['truncated'] is True
+    assert len(chart['data']) == 2  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_blocks_are_not_marked_when_result_is_complete(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[_chart_query_turn(), _both_blocks_turn()]
+        )
+    )
+
+    blocks = await _ask(client, conversation)
+
+    assert all(b['truncated'] is False for b in blocks if b['type'] != 'text')
+
+
+@pytest.mark.asyncio
+async def test_stored_block_without_truncated_reads_as_false(
+    client, session, conversation
+):
+    session.add(
+        Message(
+            conversation_id=UUID(conversation['id']),
+            role=MessageRole.ASSISTANT,
+            content=[
+                {
+                    'type': 'table',
+                    'title': 'Antiga',
+                    'columns': [{'key': 'ano', 'label': 'Ano'}],
+                    'rows': [{'ano': 2024}],
+                }
+            ],
+        )
+    )
+    await session.commit()
+
+    res = await client.get(f'/conversations/{conversation["id"]}/messages')
+
+    assert res.json()['messages'][0]['content'][0]['truncated'] is False
+
+
+def test_tool_rules_cover_truncated_results():
+    prompt = build_system_prompt(source_contexts=['## Fonte'])
+
+    assert 'truncated verdadeiro' in prompt
+    assert 'prefira uma consulta agregada' in prompt
+    assert 'dados são parciais' in prompt
+    assert 'totais ou rankings do recorte' in prompt

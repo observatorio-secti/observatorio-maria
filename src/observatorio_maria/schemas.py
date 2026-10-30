@@ -89,6 +89,10 @@ class ChartBlock(BaseModel):
     data: list[dict[str, Any]] = Field(
         description='Registros; cada um contém `x.key` e as `series[].key`.'
     )
+    truncated: bool = Field(
+        default=False,
+        description='O resultado foi cortado pelo limite de linhas.',
+    )
 
 
 class TableColumn(BaseModel):
@@ -102,6 +106,10 @@ class TableBlock(BaseModel):
     title: str | None = None
     columns: list[TableColumn]
     rows: list[dict[str, Any]]
+    truncated: bool = Field(
+        default=False,
+        description='O resultado foi cortado pelo limite de linhas.',
+    )
 
 
 ContentBlock = Annotated[

@@ -267,6 +267,8 @@ O bloco `text` vem primeiro e explica as visualizações: o que mostram, o princ
 
 Em `show_chart` e `show_table`, o modelo informa rótulos em `labels` (coluna → rótulo) e, nos gráficos, unidades em `units` (série → unidade). As chaves dos blocos continuam sendo as colunas do resultado. Sem rótulo, a coluna usa a chave legível: `total_bolsas` vira `Total bolsas`. Rótulo de coluna fora do bloco é ignorado.
 
+`chart` e `table` têm `truncated`, verdadeiro quando o resultado foi cortado por `QUERY_MAX_ROWS`. Mensagens gravadas sem o campo valem como `false`. Um `LIMIT` escrito na própria consulta não marca o campo.
+
 ### Streaming (Server-Sent Events)
 
 `POST /conversations/{id}/messages/stream` emite os eventos nesta ordem:
@@ -499,7 +501,7 @@ O Phoenix recebe só os spans de IA: o Collector filtra o resto e trata `maria.c
 Acesse `/demo/` com a API rodando. A página consome os endpoints reais:
 
 - **Chat:** digite e envie logo ao abrir (a conversa é criada automaticamente) ou clique numa sugestão: a tela vazia mostra 4 perguntas sorteadas a cada acesso, entre as 15 de `SUGGESTED_QUESTIONS` em `demo/app.js`. A resposta aparece enquanto é gerada, renderizada em Markdown. Também dá para renomear e excluir conversas, e o título é gerado automaticamente.
-- **Contrato de blocos:** uma resposta de exemplo com `text`, `chart` (Chart.js) e `table`, mais um tipo desconhecido ignorado, ao lado do JSON. O eixo Y dos gráficos mostra o rótulo e a unidade de uma série só, ou a unidade comum a todas.
+- **Contrato de blocos:** uma resposta de exemplo com `text`, `chart` (Chart.js) e `table`, mais um tipo desconhecido ignorado, ao lado do JSON. O eixo Y dos gráficos mostra o rótulo e a unidade de uma série só, ou a unidade comum a todas. Blocos com `truncated` mostram um aviso com as linhas exibidas.
 - **Catálogo de dados:** escolha a fonte, sincronize, ligue e desligue entidades, colunas e relacionamentos, edite descrições e instruções, veja **o que a Maria enxerga** e baixe o YAML. A barra da fonte mostra o estado do schema, com "Verificar agora", o interruptor de sincronização automática e um quadro com as mudanças detectadas. Em cada coluna com valores conhecidos, "valores" abre a edição do significado de cada um, destacando os sem descrição e os obsoletos.
 
 Para desligar a demo, use `DEMO_ENABLED=false`. Ela carrega Chart.js, marked e DOMPurify de CDN.

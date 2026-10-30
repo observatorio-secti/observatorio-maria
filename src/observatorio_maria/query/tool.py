@@ -497,6 +497,7 @@ class QueryRunner:
                 }
                 for row in result.rows
             ],
+            'truncated': result.truncated,
         }
         self.pending_blocks.append(chart_block)
         return {'status': 'ok', 'block_index': len(self.pending_blocks)}
@@ -537,6 +538,7 @@ class QueryRunner:
                 }
                 for row in result.rows
             ],
+            'truncated': result.truncated,
         }
         self.pending_blocks.append(table_block)
         return {'status': 'ok', 'block_index': len(self.pending_blocks)}

@@ -81,6 +81,11 @@ function chartYTitle(series) {
   return unit && series.every((serie) => serie.unit === unit) ? unit : '';
 }
 
+function truncationNotice(block, count) {
+  if (!block.truncated) return null;
+  return el('p', { class: 'block-notice' }, `Mostrando só as primeiras ${count} linhas: o resultado foi cortado pelo limite da consulta.`);
+}
+
 const blockRenderers = {
   text(block) {
     const node = el('div', { class: 'block block-text' });
@@ -96,6 +101,8 @@ const blockRenderers = {
     const canvas = el('canvas', { role: 'img', 'aria-label': block.title });
     wrap.append(canvas);
     node.append(wrap);
+    const chartNotice = truncationNotice(block, block.data.length);
+    if (chartNotice) node.append(chartNotice);
 
     const colors = PALETTE();
     const labels = block.data.map((row) => row[block.x.key]);
@@ -160,6 +167,8 @@ const blockRenderers = {
     });
     table.append(body);
     node.append(table);
+    const tableNotice = truncationNotice(block, block.rows.length);
+    if (tableNotice) node.append(tableNotice);
     return node;
   },
 };

@@ -124,6 +124,7 @@ main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 .message.user { align-self: flex-end; background: var(--user-bubble); }
 .message.assistant { align-self: flex-start; background: var(--surface-2); }
 .message .meta { font-size: 0.75rem; color: var(--muted); margin-top: 6px; }
+.block-notice { font-size: 0.8rem; color: var(--muted); margin: 8px 0 0; }
 .message .block + .block { margin-top: 10px; }
 .message p:first-child { margin-top: 0; }
 .message p:last-child { margin-bottom: 0; }
