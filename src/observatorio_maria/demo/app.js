@@ -1,7 +1,7 @@
 // Demo da API da Maria: consome os endpoints reais servidos pela mesma app.
 const API_ROOT = new URL('..', window.location.href);
 
-const state = { conversations: [], current: null, sending: false };
+const state = { conversations: [], current: null, sending: false, abort: null };
 const $ = (id) => document.getElementById(id);
 
 // --- HTTP --------------------------------------------------------------------
@@ -27,11 +27,12 @@ async function api(path, options = {}) {
 }
 
 // Lê uma resposta Server-Sent Events de um POST (EventSource só faz GET).
-async function* streamEvents(path, payload) {
+async function* streamEvents(path, payload, signal) {
   const response = await fetch(new URL(path, API_ROOT), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
     body: JSON.stringify(payload),
+    signal,
   });
   if (!response.ok) throw await apiError(response);
 
@@ -226,10 +227,19 @@ async function loadStatus() {
 
 // --- Conversas -------------------------------------------------------------------
 
-function showBanner(message) {
+function showBanner(message, retry) {
   const banner = $('banner');
   banner.textContent = message;
   banner.hidden = !message;
+  if (!retry) return;
+  const button = el('button', { class: 'banner-action', type: 'button' }, 'Tentar novamente');
+  button.addEventListener('click', retry);
+  banner.append(' ', button);
+}
+
+function setSending(sending) {
+  state.sending = sending;
+  $('send').textContent = sending ? 'Parar' : 'Enviar';
 }
 
 async function loadConversations() {
@@ -356,8 +366,8 @@ async function sendMessage(event) {
   const content = $('content').value.trim();
   if (!content || state.sending) return;
 
-  state.sending = true;
-  $('send').disabled = true;
+  setSending(true);
+  state.abort = new AbortController();
   showBanner('');
 
   const container = $('messages');
@@ -378,9 +388,11 @@ async function sendMessage(event) {
       state.current = await api('conversations', { method: 'POST', body: '{}' });
       showCurrentHeader();
     }
-    for await (const { event, data } of streamEvents(`conversations/${state.current.id}/messages/stream`, {
-      content,
-    })) {
+    for await (const { event, data } of streamEvents(
+      `conversations/${state.current.id}/messages/stream`,
+      { content },
+      state.abort.signal
+    )) {
       if (event === 'message.user') {
         const node = renderMessage(data, { pending: true });
         userNode.replaceWith(node);
@@ -405,6 +417,7 @@ async function sendMessage(event) {
         container.scrollTop = container.scrollHeight;
       } else if (event === 'message.assistant') {
         // Versão persistida substitui o texto parcial; a pergunta também foi gravada.
+        state.abort = null;
         userNode.classList.remove('pending');
         (partial ?? typing).replaceWith(renderMessage(data));
         partial = null;
@@ -422,6 +435,10 @@ async function sendMessage(event) {
     // Nada foi gravado: remove a pergunta e o texto parcial.
     userNode.remove();
     partial?.remove();
+    if (error.name === 'AbortError') {
+      showBanner('Resposta interrompida. Nada foi gravado na conversa.');
+      return;
+    }
     const hint =
       error.status === 429
         ? ' Use o botão "+ Nova conversa".'
@@ -433,11 +450,17 @@ async function sendMessage(event) {
     const status = typeof error.status === 'number' ? ` ${error.status}` : '';
     // A mensagem da API pode já terminar em ponto (limites da conversa).
     const message = error.message.replace(/[.\s]+$/, '');
-    showBanner(`Erro${status}: ${message}.${hint}`);
+    const retry = error.status === 429 || error.status === 503
+      ? null
+      : () => {
+          $('content').value = content;
+          $('composer').requestSubmit();
+        };
+    showBanner(`Erro${status}: ${message}.${hint}`, retry);
   } finally {
     typing.remove();
-    state.sending = false;
-    $('send').disabled = false;
+    state.abort = null;
+    setSending(false);
     container.scrollTop = container.scrollHeight;
     $('content').focus();
   }
@@ -514,6 +537,12 @@ $('new-conversation').addEventListener('click', createConversation);
 $('rename-conversation').addEventListener('click', renameConversation);
 $('delete-conversation').addEventListener('click', deleteConversation);
 $('composer').addEventListener('submit', sendMessage);
+// Só o clique interrompe: Enter durante a geração continua sem efeito.
+$('send').addEventListener('click', (event) => {
+  if (!state.sending) return;
+  event.preventDefault();
+  state.abort?.abort();
+});
 $('content').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
