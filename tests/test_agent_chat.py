@@ -2071,3 +2071,69 @@ async def test_stored_blocks_with_old_types_are_read(
     assert res.status_code == HTTPStatus.OK
     block = res.json()['messages'][0]['content'][0]
     assert block['x']['type'] == 'category'
+
+
+def _two_charts_turn():
+    first = _labeled_chart_turn({}).tool_calls[0]
+    second = {**first, 'id': 'g2'}
+    return AIMessage(content='', tool_calls=[first, second])
+
+
+@pytest.mark.asyncio
+async def test_markers_place_blocks_between_texts(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[
+                _chart_query_turn(),
+                _two_charts_turn(),
+                AIMessage(
+                    'Primeiro.\n[[bloco:2]]\nSegundo.\n[[bloco:1]]\nFim.'
+                ),
+            ]
+        )
+    )
+
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/messages/stream',
+        json={'content': 'Dois gráficos'},
+    )
+
+    events = parse_sse(res.text)
+    content = events[-1][1]['content']
+    assert [b.get('text') or b['type'] for b in content] == [
+        'Primeiro.',
+        'chart',
+        'Segundo.',
+        'chart',
+        'Fim.',
+    ]
+    deltas = [d for name, d in events if name == 'content.delta']
+    assert [d['index'] for d in deltas] == sorted(d['index'] for d in deltas)
+    assert all('bloco' not in (d.get('text') or '') for d in deltas)
+
+
+@pytest.mark.asyncio
+async def test_answer_without_markers_keeps_text_then_blocks(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[
+                _chart_query_turn(),
+                _two_charts_turn(),
+                AIMessage('Explicação.'),
+            ]
+        )
+    )
+
+    blocks = await _ask(client, conversation)
+
+    assert [b['type'] for b in blocks] == ['text', 'chart', 'chart']
+
+
+def test_explanation_prompt_describes_the_marker():
+    assert '[[bloco:N]]' in EXPLANATION_PROMPT

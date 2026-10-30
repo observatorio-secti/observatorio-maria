@@ -95,7 +95,9 @@ catalog/            ← introspecção somente leitura → banco de origem (ex.:
 │   ├── llm/
 │   │   ├── registry.py              # ModelTier, ModelRegistry e get_model_registry
 │   │   └── prompts.py               # Prompt de sistema da Maria
-│   ├── services/chat.py             # ChatService (stream_message / send_message)
+│   ├── services/
+│   │   ├── chat.py                  # ChatService (stream_message / send_message)
+│   │   └── assembly.py              # Divide o texto e posiciona gráficos e tabelas
 │   ├── evaluation/                  # Comando `task eval` (avaliação com modelo real)
 │   │   ├── reference.py             # Formato e carregamento das perguntas de referência
 │   │   ├── checks.py                # Critérios numbers, list e sources
@@ -266,6 +268,8 @@ Hoje a Maria produz blocos `text`, `chart` e `table` a partir de consultas a fon
 
 O bloco `text` vem primeiro e explica as visualizações: o que mostram, o principal destaque e as ressalvas. Depois de pedir gráficos e tabelas, o modelo é chamado mais uma vez, sem ferramentas, para escrever essa explicação, e a última chamada do orçamento também é sem ferramentas. Uma resposta só com `chart` ou `table` é aceita como exceção, quando o modelo não devolve texto.
 
+O modelo pode posicionar cada visualização no texto com `[[bloco:N]]`, usando o `block_index` devolvido pela ferramenta. Nesse caso, `content` tem vários blocos `text`, e o cliente deve renderizar a lista em ordem. Blocos não citados vêm depois do texto, marcadores inválidos são removidos, e o marcador nunca chega ao cliente.
+
 Em `show_chart` e `show_table`, o modelo informa rótulos em `labels` (coluna → rótulo) e, nos gráficos, unidades em `units` (série → unidade). As chaves dos blocos continuam sendo as colunas do resultado. Sem rótulo, a coluna usa a chave legível: `total_bolsas` vira `Total bolsas`. Rótulo de coluna fora do bloco é ignorado.
 
 `chart` e `table` têm `truncated`, verdadeiro quando o resultado foi cortado por `QUERY_MAX_ROWS`. Mensagens gravadas sem o campo valem como `false`. Um `LIMIT` escrito na própria consulta não marca o campo.
@@ -286,7 +290,7 @@ Respostas que consultaram dados terminam com um bloco `suggestions` (`questions`
 |---|---|---|
 | `message.user` | `MessagePublic` da pergunta | Logo no início |
 | `activity` | `{"kind": "query", "source": "…", "description": "…"}` | Antes de cada consulta a uma fonte de dados |
-| `content.delta` | Fragmento de texto (`type: "text", text: "…"`) ou bloco inteiro (`type: "chart"` / `"table"` / `"suggestions"`, `block: {…}`) | Conforme texto é gerado ou blocos de dados são entregues |
+| `content.delta` | Fragmento de texto (`type: "text", text: "…"`) ou bloco inteiro (`type: "chart"` / `"table"` / `"suggestions"`, `block: {…}`), com `index` crescente: a posição do bloco na resposta | Conforme texto é gerado ou blocos de dados são entregues, na ordem da resposta |
 | `message.assistant` | `MessagePublic` da resposta, **já persistida** | Ao final |
 | `error` | `{"detail": "…"}` | Se o modelo falhar depois de iniciado o stream; nada é gravado |
 
@@ -509,7 +513,7 @@ O Phoenix recebe só os spans de IA: o Collector filtra o resto e trata `maria.c
 
 Acesse `/demo/` com a API rodando. A página consome os endpoints reais:
 
-- **Chat:** digite e envie logo ao abrir (a conversa é criada automaticamente) ou clique numa sugestão: a tela vazia mostra 4 perguntas sorteadas a cada acesso, entre as 15 de `SUGGESTED_QUESTIONS` em `demo/app.js`. A resposta aparece enquanto é gerada, renderizada em Markdown. Durante a geração, o botão Enviar vira Parar: a resposta é descartada, nada é gravado e a pergunta fica no campo. Em erro temporário, o banner oferece "Tentar novamente". A última resposta mostra as perguntas de continuação como botões, e clicar envia a pergunta. Cada resposta tem o botão Copiar (texto em Markdown), e os blocos têm "Baixar PNG" e "Baixar CSV". O CSV sai pronto para o Excel em pt-BR, com fórmulas neutralizadas e título, aviso de corte e origem nas últimas linhas. Também dá para renomear e excluir conversas, e o título é gerado automaticamente.
+- **Chat:** digite e envie logo ao abrir (a conversa é criada automaticamente) ou clique numa sugestão: a tela vazia mostra 4 perguntas sorteadas a cada acesso, entre as 15 de `SUGGESTED_QUESTIONS` em `demo/app.js`. A resposta aparece enquanto é gerada, renderizada em Markdown, com textos, gráficos e tabelas na ordem em que chegam. Durante a geração, o botão Enviar vira Parar: a resposta é descartada, nada é gravado e a pergunta fica no campo. Em erro temporário, o banner oferece "Tentar novamente". A última resposta mostra as perguntas de continuação como botões, e clicar envia a pergunta. Cada resposta tem o botão Copiar (texto em Markdown), e os blocos têm "Baixar PNG" e "Baixar CSV". O CSV sai pronto para o Excel em pt-BR, com fórmulas neutralizadas e título, aviso de corte e origem nas últimas linhas. Também dá para renomear e excluir conversas, e o título é gerado automaticamente.
 - **Contrato de blocos:** uma resposta de exemplo com `text`, `chart` (Chart.js) e `table`, mais um tipo desconhecido ignorado, ao lado do JSON. O eixo Y dos gráficos mostra o rótulo e a unidade de uma série só, ou a unidade comum a todas. Blocos com `truncated` mostram um aviso com as linhas exibidas, e blocos com `origin` mostram um rodapé com fonte, descrição, data e cobertura.
 - **Catálogo de dados:** escolha a fonte, sincronize, ligue e desligue entidades, colunas e relacionamentos, edite descrições e instruções, veja **o que a Maria enxerga** e baixe o YAML. A barra da fonte mostra o estado do schema, com "Verificar agora", o interruptor de sincronização automática e um quadro com as mudanças detectadas. Em cada coluna com valores conhecidos, "valores" abre a edição do significado de cada um, destacando os sem descrição e os obsoletos.
 

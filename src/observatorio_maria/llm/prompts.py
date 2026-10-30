@@ -83,9 +83,12 @@ TOOL_RULES_PROMPT = (
 )
 
 EXPLANATION_PROMPT = (
-    'Os gráficos e tabelas pedidos já estão visíveis para o usuário, logo '
-    'abaixo do seu texto. Escreva agora a explicação do que eles mostram, '
-    'sem repetir o que você já escreveu nesta resposta.'
+    'Os gráficos e tabelas pedidos serão mostrados ao usuário. Escreva agora '
+    'a explicação do que eles mostram, sem repetir o que você já escreveu '
+    'nesta resposta. Com mais de uma visualização, coloque cada uma depois '
+    'do parágrafo que a explica, escrevendo [[bloco:N]] numa linha própria, '
+    'com o block_index devolvido pela ferramenta. Visualizações sem marcador '
+    'aparecem no fim.'
 )
 
 

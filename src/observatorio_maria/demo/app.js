@@ -525,9 +525,8 @@ async function sendMessage(event) {
   container.scrollTop = container.scrollHeight;
 
   let userNode = optimistic;
-  let partial = null; // balão com o texto em geração
-  let text = '';
-  const receivedBlocks = [];
+  let partial = null; // balão com a resposta em geração
+  let textPart = null; // texto em geração e o nó que o mostra
   try {
     // Sem conversa selecionada, a primeira mensagem cria uma nova.
     if (!state.current) {
@@ -551,15 +550,17 @@ async function sendMessage(event) {
           partial = el('div', { class: 'message assistant' });
           typing.replaceWith(partial);
         }
+        // Anexa cada parte uma vez, para não recriar os gráficos já exibidos.
         if (data.type === 'text' && data.text) {
-          text += data.text;
+          const textBlock = { type: 'text', text: (textPart?.block.text ?? '') + data.text };
+          const node = blockRenderers.text(textBlock);
+          if (textPart) textPart.node.replaceWith(node);
+          else partial.append(node);
+          textPart = { block: textBlock, node };
         } else if (data.block) {
-          receivedBlocks.push(data.block);
+          textPart = null;
+          partial.append(renderBlocks([data.block]));
         }
-        const renderList = [];
-        if (text) renderList.push({ type: 'text', text });
-        renderList.push(...receivedBlocks);
-        partial.replaceChildren(renderBlocks(renderList));
         container.scrollTop = container.scrollHeight;
       } else if (event === 'message.assistant') {
         // Versão persistida substitui o texto parcial; a pergunta também foi gravada.
@@ -641,6 +642,7 @@ const SAMPLE_CONTENT = [
       coverage: null,
     },
   },
+  { type: 'text', text: 'O **doutorado** cresceu menos em números absolutos. A distribuição por território vem a seguir:' },
   {
     type: 'table',
     title: 'Distribuição por território (exemplo)',

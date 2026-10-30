@@ -73,6 +73,11 @@ from observatorio_maria.query.sanitization import (
 )
 from observatorio_maria.query.tool import QueryObserver, QueryRunner
 from observatorio_maria.schemas import SuggestionsBlock, TextBlock
+from observatorio_maria.services.assembly import (
+    ContentDelta,
+    ResponseAssembler,
+    plain_text,
+)
 from observatorio_maria.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -314,16 +319,6 @@ class Activity:
 
 
 @dataclass(frozen=True)
-class ContentDelta:
-    """Fragmento de texto ou bloco completo da resposta."""
-
-    index: int
-    text: str | None = None
-    type: str = 'text'
-    block: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
 class AssistantMessageCompleted:
     message: Message
 
@@ -505,6 +500,7 @@ class ChatService:
         span.set_input(content)
 
         accumulated_text = ''
+        assembler = ResponseAssembler()
         call_count = 0
         text_only = False
         token_tracker = _TokenUsageTracker()
@@ -556,11 +552,15 @@ class ChatService:
                         turn_chunk = (
                             chunk if turn_chunk is None else turn_chunk + chunk
                         )
-                        if chunk.text:
-                            text = separator + chunk.text
-                            separator = ''
-                            accumulated_text += text
-                            yield ContentDelta(index=0, text=text, type='text')
+                        if not chunk.text:
+                            continue
+                        text = separator + chunk.text
+                        separator = ''
+                        accumulated_text += text
+                        for delta in assembler.add_text(
+                            text, query_runner.pending_blocks
+                        ):
+                            yield delta
                 except ModelInvocationError:
                     span.end()
                     raise
@@ -601,16 +601,17 @@ class ChatService:
         finally:
             await query_runner.close()
 
-        # Emite blocos de apresentação que foram acumulados
-        for i, block in enumerate(query_runner.pending_blocks, start=1):
-            yield ContentDelta(index=i, type=block['type'], block=block)
+        # Solta o texto retido e os blocos que o texto não posicionou
+        for delta in assembler.finish(query_runner.pending_blocks):
+            yield delta
+        answer_text = plain_text(accumulated_text)
 
         suggestions = None
         if query_runner.total_queries and not self._is_last_question(history):
             try:
                 suggestions = await self._suggest_followups(
                     content,
-                    accumulated_text,
+                    answer_text,
                     consultable_sources,
                     token_tracker,
                 )
@@ -619,17 +620,12 @@ class ChatService:
                 raise
         if suggestions:
             yield ContentDelta(
-                index=len(query_runner.pending_blocks) + 1,
+                index=len(assembler.blocks),
                 type=suggestions['type'],
                 block=suggestions,
             )
 
-        content_blocks: list[dict[str, Any]] = []
-        if accumulated_text:
-            content_blocks.append(
-                TextBlock(text=accumulated_text).model_dump()
-            )
-        content_blocks.extend(query_runner.pending_blocks)
+        content_blocks = list(assembler.blocks)
         if suggestions:
             content_blocks.append(suggestions)
         if not content_blocks:
@@ -637,7 +633,7 @@ class ChatService:
 
         self.agent_metrics.record_model_calls(call_count)
 
-        span.set_output(accumulated_text or json.dumps(content_blocks))
+        span.set_output(answer_text or json.dumps(content_blocks))
         with trace.use_span(span, end_on_exit=True):
             logger.info(
                 'Resposta gerada',
