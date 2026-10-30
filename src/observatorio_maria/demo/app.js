@@ -222,6 +222,54 @@ function showCurrentHeader() {
   $('chat-actions').hidden = !state.current;
 }
 
+// --- Sugestões de perguntas --------------------------------------------------
+
+const SUGGESTED_QUESTIONS = [
+  'Quantas bolsas foram concedidas em cada modalidade em 2023?',
+  'Quais as 5 instituições com mais bolsas?',
+  'Como as bolsas se distribuem por grande área do conhecimento?',
+  'Quantas bolsas estão ativas hoje?',
+  'Como evoluiu o número de bolsas por ano desde 2018?',
+  'Quantos projetos com bolsa tratam de agricultura familiar?',
+  'Quantos bolsistas têm currículo Lattes identificado?',
+  'Quantos artigos foram publicados por ano desde 2020?',
+  'Quantos artigos Qualis A1 foram publicados desde 2022?',
+  'Quais pesquisadores têm mais artigos?',
+  'Que artigos tratam de inteligência artificial?',
+  'Quantas patentes foram concedidas desde 2020?',
+  'Quais instituições têm mais pesquisadores no Simcc?',
+  'Que projetos de pesquisa do currículo Lattes tratam de educação?',
+  'Quantos projetos sobre dengue existem?',
+];
+const SUGGESTIONS_SHOWN = 4;
+
+// Sorteadas uma vez a cada acesso à página (Fisher-Yates).
+const suggestions = [...SUGGESTED_QUESTIONS];
+for (let i = suggestions.length - 1; i > 0; i -= 1) {
+  const j = Math.floor(Math.random() * (i + 1));
+  [suggestions[i], suggestions[j]] = [suggestions[j], suggestions[i]];
+}
+suggestions.length = SUGGESTIONS_SHOWN;
+
+// Tela de conversa vazia: sai junto com `.empty` quando a conversa começa.
+function emptyState(text) {
+  const empty = el('div', { class: 'empty' });
+  empty.append(el('p', {}, text));
+  const list = el('div', { class: 'suggestions' });
+  list.append(
+    ...suggestions.map((question) => {
+      const button = el('button', { class: 'suggestion', type: 'button' }, question);
+      button.addEventListener('click', () => {
+        $('content').value = question;
+        $('composer').requestSubmit();
+      });
+      return button;
+    })
+  );
+  empty.append(list);
+  return empty;
+}
+
 async function openConversation(id) {
   showBanner('');
   state.current = await api(`conversations/${id}`);
@@ -232,7 +280,7 @@ async function openConversation(id) {
   const container = $('messages');
   container.replaceChildren();
   if (!messages.length) {
-    container.append(el('div', { class: 'empty' }, 'Nenhuma mensagem ainda. A primeira mensagem define o título.'));
+    container.append(emptyState('Nenhuma mensagem ainda. A primeira mensagem define o título.'));
   }
   messages.forEach((message) => container.append(renderMessage(message)));
   container.scrollTop = container.scrollHeight;
@@ -264,9 +312,7 @@ async function deleteConversation() {
   await api(`conversations/${state.current.id}`, { method: 'DELETE' });
   state.current = null;
   showCurrentHeader();
-  $('messages').replaceChildren(
-    el('div', { class: 'empty' }, 'Conversa excluída. Escreva uma nova pergunta para começar outra.')
-  );
+  $('messages').replaceChildren(emptyState('Conversa excluída. Escreva uma nova pergunta para começar outra.'));
   await loadConversations();
 }
 
@@ -434,5 +480,8 @@ $('content').addEventListener('keydown', (event) => {
   }
 });
 
+$('messages').replaceChildren(
+  emptyState('Escreva sua pergunta abaixo ou escolha uma sugestão. A conversa é criada e salva automaticamente.')
+);
 loadStatus();
 loadConversations();

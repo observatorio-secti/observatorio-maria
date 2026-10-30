@@ -158,3 +158,14 @@ Na tabela de colunas da entidade, a aba "Catálogo de dados" SHALL permitir esco
 #### Scenario: Deixar de listar
 - **WHEN** o usuário escolhe "nunca" para uma coluna com valores listados
 - **THEN** a prévia do contexto da fonte deixa de listar os valores dessa coluna
+
+### Requirement: Sugestões de perguntas
+Com a conversa vazia, a página SHALL mostrar sugestões de perguntas, sorteadas a cada acesso entre uma lista de 10 a 15 perguntas. Clicar numa sugestão SHALL enviá-la como mensagem. As sugestões MUST sair da tela quando a conversa começar.
+
+#### Scenario: Sugestões variam por acesso
+- **WHEN** o usuário acessa a página de novo
+- **THEN** as sugestões são sorteadas outra vez entre as perguntas da lista
+
+#### Scenario: Enviar uma sugestão
+- **WHEN** o usuário clica numa sugestão
+- **THEN** a pergunta é enviada como mensagem, a resposta aparece na conversa e as sugestões somem

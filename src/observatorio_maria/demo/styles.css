@@ -115,7 +115,10 @@ main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 .chat-header h2 { margin: 0; font-size: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-.empty { margin: auto; text-align: center; color: var(--muted); max-width: 360px; }
+.empty { margin: auto; text-align: center; color: var(--muted); max-width: 520px; }
+.suggestions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.suggestion { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; text-align: left; line-height: 1.35; cursor: pointer; }
+.suggestion:hover, .suggestion:focus-visible { border-color: var(--accent); }
 
 .message { max-width: 80%; padding: 10px 14px; border-radius: 12px; }
 .message.user { align-self: flex-end; background: var(--user-bubble); }
@@ -166,6 +169,7 @@ pre { margin: 0; overflow: auto; font-size: 0.8rem; background: var(--surface-2)
   .chat { height: 70vh; }
   .blocks-layout { grid-template-columns: 1fr; }
   .message { max-width: 100%; }
+  .suggestions { grid-template-columns: 1fr; }
   .composer { flex-wrap: wrap; }
   .composer textarea { flex-basis: 100%; order: -1; }
 }

@@ -487,7 +487,7 @@ O Phoenix recebe só os spans de IA: o Collector filtra o resto e trata `maria.c
 
 Acesse `/demo/` com a API rodando. A página consome os endpoints reais:
 
-- **Chat:** digite e envie logo ao abrir (a conversa é criada automaticamente). A resposta aparece enquanto é gerada, renderizada em Markdown. Também dá para renomear e excluir conversas, e o título é gerado automaticamente.
+- **Chat:** digite e envie logo ao abrir (a conversa é criada automaticamente) ou clique numa sugestão: a tela vazia mostra 4 perguntas sorteadas a cada acesso, entre as 15 de `SUGGESTED_QUESTIONS` em `demo/app.js`. A resposta aparece enquanto é gerada, renderizada em Markdown. Também dá para renomear e excluir conversas, e o título é gerado automaticamente.
 - **Contrato de blocos:** uma resposta de exemplo com `text`, `chart` (Chart.js) e `table`, mais um tipo desconhecido ignorado, ao lado do JSON.
 - **Catálogo de dados:** escolha a fonte, sincronize, ligue e desligue entidades, colunas e relacionamentos, edite descrições e instruções, veja **o que a Maria enxerga** e baixe o YAML. A barra da fonte mostra o estado do schema, com "Verificar agora", o interruptor de sincronização automática e um quadro com as mudanças detectadas. Em cada coluna com valores conhecidos, "valores" abre a edição do significado de cada um, destacando os sem descrição e os obsoletos.
 
