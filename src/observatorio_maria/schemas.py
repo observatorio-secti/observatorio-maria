@@ -126,8 +126,16 @@ class TableBlock(BaseModel):
     origin: BlockOrigin | None = None
 
 
+class SuggestionsBlock(BaseModel):
+    type: Literal['suggestions'] = 'suggestions'
+    questions: list[str] = Field(
+        description='Perguntas de continuação, para o usuário enviar.'
+    )
+
+
 ContentBlock = Annotated[
-    TextBlock | ChartBlock | TableBlock, Field(discriminator='type')
+    TextBlock | ChartBlock | TableBlock | SuggestionsBlock,
+    Field(discriminator='type'),
 ]
 
 
@@ -176,7 +184,7 @@ class ContentDeltaPublic(BaseModel):
     """Evento `content.delta`: fragmento do bloco `index` da resposta."""
 
     index: int
-    type: Literal['text', 'chart', 'table'] = 'text'
+    type: Literal['text', 'chart', 'table', 'suggestions'] = 'text'
     text: str | None = None
     block: dict[str, Any] | None = None
 

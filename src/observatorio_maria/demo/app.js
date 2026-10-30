@@ -312,9 +312,26 @@ const blockRenderers = {
   },
 };
 
+function suggestionsBlock(block) {
+  const node = el('div', { class: 'block block-suggestions' });
+  block.questions.forEach((question) => {
+    const button = el('button', { class: 'suggestion', type: 'button' }, question);
+    button.addEventListener('click', () => {
+      $('content').value = question;
+      $('composer').requestSubmit();
+    });
+    node.append(button);
+  });
+  return node;
+}
+
 function renderBlocks(blocks) {
   const fragment = document.createDocumentFragment();
   blocks.forEach((block) => {
+    if (block.type === 'suggestions') {
+      fragment.append(suggestionsBlock(block));
+      return;
+    }
     const render = blockRenderers[block.type];
     // Tipos desconhecidos são ignorados; aqui mostramos um aviso só para a demo.
     fragment.append(

@@ -271,6 +271,8 @@ Em `show_chart` e `show_table`, o modelo informa rótulos em `labels` (coluna �
 
 `chart` e `table` também trazem `origin`, gravado a partir da consulta usada: nomes das fontes (`sources`), descrição (`description`, com CPF e e-mail mascarados), momento da consulta (`queried_at`) e, entre fontes, `coverage` com `keys` e `found`. O SQL não entra no bloco. Mensagens gravadas sem o campo voltam com `origin` nulo.
 
+Respostas que consultaram dados terminam com um bloco `suggestions` (`questions`, com até 3 perguntas de continuação), gerado no nível `fast` depois da resposta. Se a geração falhar, o bloco só não vem. Ele fica fora do histórico enviado ao modelo e não aparece na última pergunta permitida da conversa.
+
 ### Streaming (Server-Sent Events)
 
 `POST /conversations/{id}/messages/stream` emite os eventos nesta ordem:
@@ -279,7 +281,7 @@ Em `show_chart` e `show_table`, o modelo informa rótulos em `labels` (coluna �
 |---|---|---|
 | `message.user` | `MessagePublic` da pergunta | Logo no início |
 | `activity` | `{"kind": "query", "source": "…", "description": "…"}` | Antes de cada consulta a uma fonte de dados |
-| `content.delta` | Fragmento de texto (`type: "text", text: "…"`) ou bloco inteiro (`type: "chart"` / `"table"`, `block: {…}`) | Conforme texto é gerado ou blocos de dados são entregues |
+| `content.delta` | Fragmento de texto (`type: "text", text: "…"`) ou bloco inteiro (`type: "chart"` / `"table"` / `"suggestions"`, `block: {…}`) | Conforme texto é gerado ou blocos de dados são entregues |
 | `message.assistant` | `MessagePublic` da resposta, **já persistida** | Ao final |
 | `error` | `{"detail": "…"}` | Se o modelo falhar depois de iniciado o stream; nada é gravado |
 
@@ -502,7 +504,7 @@ O Phoenix recebe só os spans de IA: o Collector filtra o resto e trata `maria.c
 
 Acesse `/demo/` com a API rodando. A página consome os endpoints reais:
 
-- **Chat:** digite e envie logo ao abrir (a conversa é criada automaticamente) ou clique numa sugestão: a tela vazia mostra 4 perguntas sorteadas a cada acesso, entre as 15 de `SUGGESTED_QUESTIONS` em `demo/app.js`. A resposta aparece enquanto é gerada, renderizada em Markdown. Durante a geração, o botão Enviar vira Parar: a resposta é descartada, nada é gravado e a pergunta fica no campo. Em erro temporário, o banner oferece "Tentar novamente". Cada resposta tem o botão Copiar (texto em Markdown), e os blocos têm "Baixar PNG" e "Baixar CSV". O CSV sai pronto para o Excel em pt-BR, com fórmulas neutralizadas e título, aviso de corte e origem nas últimas linhas. Também dá para renomear e excluir conversas, e o título é gerado automaticamente.
+- **Chat:** digite e envie logo ao abrir (a conversa é criada automaticamente) ou clique numa sugestão: a tela vazia mostra 4 perguntas sorteadas a cada acesso, entre as 15 de `SUGGESTED_QUESTIONS` em `demo/app.js`. A resposta aparece enquanto é gerada, renderizada em Markdown. Durante a geração, o botão Enviar vira Parar: a resposta é descartada, nada é gravado e a pergunta fica no campo. Em erro temporário, o banner oferece "Tentar novamente". A última resposta mostra as perguntas de continuação como botões, e clicar envia a pergunta. Cada resposta tem o botão Copiar (texto em Markdown), e os blocos têm "Baixar PNG" e "Baixar CSV". O CSV sai pronto para o Excel em pt-BR, com fórmulas neutralizadas e título, aviso de corte e origem nas últimas linhas. Também dá para renomear e excluir conversas, e o título é gerado automaticamente.
 - **Contrato de blocos:** uma resposta de exemplo com `text`, `chart` (Chart.js) e `table`, mais um tipo desconhecido ignorado, ao lado do JSON. O eixo Y dos gráficos mostra o rótulo e a unidade de uma série só, ou a unidade comum a todas. Blocos com `truncated` mostram um aviso com as linhas exibidas, e blocos com `origin` mostram um rodapé com fonte, descrição, data e cobertura.
 - **Catálogo de dados:** escolha a fonte, sincronize, ligue e desligue entidades, colunas e relacionamentos, edite descrições e instruções, veja **o que a Maria enxerga** e baixe o YAML. A barra da fonte mostra o estado do schema, com "Verificar agora", o interruptor de sincronização automática e um quadro com as mudanças detectadas. Em cada coluna com valores conhecidos, "valores" abre a edição do significado de cada um, destacando os sem descrição e os obsoletos.
 

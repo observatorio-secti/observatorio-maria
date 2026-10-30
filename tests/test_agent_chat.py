@@ -3,10 +3,14 @@ import os
 import sqlite3
 from datetime import datetime
 from http import HTTPStatus
+from itertools import repeat
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import pytest
+from langchain_core.language_models.fake_chat_models import (
+    GenericFakeChatModel,
+)
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -17,6 +21,7 @@ from observatorio_maria.catalog.sync import load_entities, load_relationships
 from observatorio_maria.llm.prompts import (
     EXPLANATION_PROMPT,
     build_system_prompt,
+    parse_suggestions,
 )
 from observatorio_maria.llm.registry import (
     ModelRegistry,
@@ -40,7 +45,7 @@ from observatorio_maria.query.tool import build_origin, column_label
 from observatorio_maria.schemas import TextBlock
 from observatorio_maria.services.chat import ChatService
 from observatorio_maria.settings import Settings
-from tests.conftest import ScriptedToolChatModel
+from tests.conftest import FailingChatModel, ScriptedToolChatModel
 
 
 @pytest.fixture
@@ -130,9 +135,16 @@ async def setup_catalog(session, connection_env: str):
     return ds
 
 
-def set_test_model(model):
+NO_SUGGESTIONS = GenericFakeChatModel(messages=repeat(AIMessage('Nada')))
+
+
+def set_test_model(model, fast_model=None):
+    fast = fast_model or NO_SUGGESTIONS
     registry = ModelRegistry([
-        RegisteredModel(tier, f'fake:{tier}', model) for tier in ModelTier
+        RegisteredModel(
+            tier, f'fake:{tier}', fast if tier == ModelTier.FAST else model
+        )
+        for tier in ModelTier
     ])
     app.dependency_overrides[get_model_registry] = lambda: registry
 
@@ -1622,3 +1634,124 @@ async def test_stored_block_without_origin_reads_as_null(
     res = await client.get(f'/conversations/{conversation["id"]}/messages')
 
     assert res.json()['messages'][0]['content'][0]['origin'] is None
+
+
+def _suggesting_model(text='Por área?\nPor instituição?'):
+    return GenericFakeChatModel(messages=repeat(AIMessage(text)))
+
+
+def _answer_with_query():
+    return ScriptedToolChatModel(
+        responses=[_chart_query_turn(), AIMessage('Resposta com dados.')]
+    )
+
+
+@pytest.mark.parametrize(
+    ('text', 'expected'),
+    [
+        ('1. Por área?\n2) Por ano?', ['Por área?', 'Por ano?']),
+        ('- Por área?\n* Por ano?', ['Por área?', 'Por ano?']),
+        ('Claro!\nPor área?\npor ÁREA?', ['Por área?']),
+        ('A?\nB?\nC?\nD?', ['A?', 'B?', 'C?']),
+        (f'{"x" * 120}?', []),
+        ('Pergunta atual?', []),
+        ('', []),
+    ],
+)
+def test_parse_suggestions(text, expected):
+    assert parse_suggestions(text, 'Pergunta atual?') == expected
+
+
+@pytest.mark.asyncio
+async def test_answer_with_query_ends_with_suggestions(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(_answer_with_query(), _suggesting_model())
+
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/messages',
+        json={'content': 'Quantos projetos?'},
+    )
+
+    assistant = res.json()['assistant_message']
+    assert assistant['content'][-1] == {
+        'type': 'suggestions',
+        'questions': ['Por área?', 'Por instituição?'],
+    }
+    stored = await session.get(Message, UUID(assistant['id']))
+    assert stored.model_tier == ModelTier.MEDIUM
+
+
+@pytest.mark.asyncio
+async def test_answer_without_query_has_no_suggestions(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    fast = ScriptedToolChatModel(responses=[AIMessage('Por área?')])
+    set_test_model(ScriptedToolChatModel(responses=[AIMessage('Oi!')]), fast)
+
+    blocks = await _ask(client, conversation, 'Olá')
+
+    assert [b['type'] for b in blocks] == ['text']
+    assert fast.recorded_calls == []
+
+
+@pytest.mark.asyncio
+async def test_last_allowed_question_has_no_suggestions(
+    client, session, conversation, fomento_source, monkeypatch
+):
+    monkeypatch.setenv('CONVERSATION_MAX_QUESTIONS', '1')
+    await setup_catalog(session, fomento_source)
+    set_test_model(_answer_with_query(), _suggesting_model())
+
+    blocks = await _ask(client, conversation)
+
+    assert [b['type'] for b in blocks] == ['text']
+
+
+@pytest.mark.asyncio
+async def test_failed_suggestions_keep_the_answer(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(_answer_with_query(), FailingChatModel())
+
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/messages/stream',
+        json={'content': 'Quantos projetos?'},
+    )
+
+    events = parse_sse(res.text)
+    assert 'error' not in [name for name, _ in events]
+    assert [b['type'] for b in events[-1][1]['content']] == ['text']
+
+
+@pytest.mark.asyncio
+async def test_suggestions_arrive_last_and_stay_out_of_history(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[_chart_query_turn(), _chart_turn(), AIMessage('Texto.')]
+        ),
+        _suggesting_model(),
+    )
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/messages/stream',
+        json={'content': 'Mostre'},
+    )
+    deltas = [d for name, d in parse_sse(res.text) if name == 'content.delta']
+    assert [d['type'] for d in deltas] == ['text'] * 6 + [
+        'chart',
+        'suggestions',
+    ]
+
+    second = ScriptedToolChatModel(responses=[AIMessage('Certo.')])
+    set_test_model(second)
+    await _ask(client, conversation, 'E depois?')
+
+    assert 'Por área?' not in json.dumps([
+        m.content for m in second.recorded_calls[0]
+    ])

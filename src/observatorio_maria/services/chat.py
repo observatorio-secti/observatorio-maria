@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -36,7 +37,9 @@ from observatorio_maria.catalog.sync import (
 from observatorio_maria.database import get_session
 from observatorio_maria.llm.prompts import (
     EXPLANATION_PROMPT,
+    SUGGESTIONS_PROMPT,
     build_system_prompt,
+    parse_suggestions,
 )
 from observatorio_maria.llm.registry import (
     ModelRegistry,
@@ -62,7 +65,7 @@ from observatorio_maria.query.execution import (
 from observatorio_maria.query.federated_validator import cited_sources
 from observatorio_maria.query.federation import FederationLimits
 from observatorio_maria.query.tool import QueryObserver, QueryRunner
-from observatorio_maria.schemas import TextBlock
+from observatorio_maria.schemas import SuggestionsBlock, TextBlock
 from observatorio_maria.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -74,6 +77,8 @@ QUERY_TOOLS = {'query_data', 'query_across_sources'}
 # Nível usado nas respostas do chat. Decisão interna: não é exposta nem
 # configurável por clientes da API.
 CHAT_MODEL_TIER = ModelTier.MEDIUM
+
+SUGGESTIONS_TIMEOUT_SECONDS = 10
 
 
 class ModelInvocationError(Exception):
@@ -156,6 +161,8 @@ def blocks_to_text(blocks: list[dict[str, Any]]) -> str:
             parts.append(summarize_chart(block))
         elif btype == 'table':
             parts.append(summarize_table(block))
+        elif btype == 'suggestions':
+            continue
         else:
             parts.append(json.dumps(block))
     return '\n\n'.join(p for p in parts if p)
@@ -512,12 +519,33 @@ class ChatService:
         for i, block in enumerate(query_runner.pending_blocks, start=1):
             yield ContentDelta(index=i, type=block['type'], block=block)
 
+        suggestions = None
+        if query_runner.total_queries and not self._is_last_question(history):
+            try:
+                suggestions = await self._suggest_followups(
+                    content,
+                    accumulated_text,
+                    consultable_sources,
+                    token_tracker,
+                )
+            except BaseException:
+                span.end()
+                raise
+        if suggestions:
+            yield ContentDelta(
+                index=len(query_runner.pending_blocks) + 1,
+                type=suggestions['type'],
+                block=suggestions,
+            )
+
         content_blocks: list[dict[str, Any]] = []
         if accumulated_text:
             content_blocks.append(
                 TextBlock(text=accumulated_text).model_dump()
             )
         content_blocks.extend(query_runner.pending_blocks)
+        if suggestions:
+            content_blocks.append(suggestions)
         if not content_blocks:
             content_blocks = [TextBlock(text='').model_dump()]
 
@@ -563,6 +591,42 @@ class ChatService:
         self.session.add_all([user_message, assistant_message, conversation])
         await self.session.commit()
         yield AssistantMessageCompleted(assistant_message)
+
+    def _is_last_question(self, history: list[Message]) -> bool:
+        max_questions = self.settings.CONVERSATION_MAX_QUESTIONS
+        asked = sum(m.role == MessageRole.USER for m in history) + 1
+        return 0 < max_questions <= asked
+
+    async def _suggest_followups(
+        self,
+        question: str,
+        answer: str,
+        sources: list[CatalogDataSource],
+        token_tracker: _TokenUsageTracker,
+    ) -> dict[str, Any] | None:
+        """Perguntas de continuação; uma falha aqui não afeta a resposta."""
+        names = ', '.join(ds.name or ds.id for ds in sources)
+        try:
+            response = await asyncio.wait_for(
+                self.registry.get(ModelTier.FAST).model.ainvoke(
+                    [
+                        SystemMessage(SUGGESTIONS_PROMPT),
+                        HumanMessage(
+                            f'Fontes: {names}\n\nPergunta: {question}\n\n'
+                            f'Resposta: {answer}'
+                        ),
+                    ],
+                    config={'callbacks': [*self.callbacks, token_tracker]},
+                ),
+                SUGGESTIONS_TIMEOUT_SECONDS,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning('Sugestões não geradas', exc_info=True)
+            return None
+        questions = parse_suggestions(response.text, question)
+        if not questions:
+            return None
+        return SuggestionsBlock(questions=questions).model_dump()
 
     async def _execute_tool_call(  # noqa: PLR0912, PLR0914, PLR0915
         self,

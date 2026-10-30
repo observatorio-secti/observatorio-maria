@@ -152,6 +152,8 @@ main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 
 .banner { margin: 0 16px; padding: 8px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn-text); font-size: 0.85rem; }
 
+.block-suggestions { display: grid; gap: 6px; margin-top: 10px; }
+.message:not(:last-child) .block-suggestions { display: none; }
 .block-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; }
 .block-action { border: 0; padding: 0; background: none; color: var(--muted); font-size: 0.75rem; text-decoration: underline; cursor: pointer; }
 .banner-action { border: 0; padding: 0; background: none; color: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
