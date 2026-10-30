@@ -101,6 +101,14 @@ class QueryAcrossSourcesInput(BaseModel):
     )
 
 
+def column_label(key: str, labels: dict[str, str] | None) -> str:
+    """Rótulo informado pelo modelo ou, sem ele, a chave legível."""
+    if labels and labels.get(key):
+        return labels[key]
+    text = key.replace('_', ' ').strip()
+    return text[:1].upper() + text[1:]
+
+
 class ShowChartInput(BaseModel):
     result_id: str = Field(
         description='Identificador do resultado da consulta (ex.: "r1").'
@@ -113,6 +121,20 @@ class ShowChartInput(BaseModel):
     series: list[str] = Field(
         description='Lista de nomes de colunas numéricas para as séries.'
     )
+    labels: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            'Rótulos legíveis em português, de coluna para rótulo '
+            '(ex.: {"ano_inicio": "Ano de início"}).'
+        ),
+    )
+    units: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            'Unidade de cada série, de coluna para unidade '
+            '(ex.: {"orcamento": "R$"}).'
+        ),
+    )
 
 
 class ShowTableInput(BaseModel):
@@ -124,6 +146,13 @@ class ShowTableInput(BaseModel):
     )
     columns: list[str] = Field(
         description='Lista de nomes de colunas a exibir na tabela.'
+    )
+    labels: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            'Rótulos legíveis em português, de coluna para rótulo '
+            '(ex.: {"nome": "Instituição"}).'
+        ),
     )
 
 
@@ -420,13 +449,15 @@ class QueryRunner:
             response['hint'] = EMPTY_RESULT_HINT
         return response, query.sources, query.sql
 
-    def show_chart(
+    def show_chart(  # noqa: PLR0913, PLR0917
         self,
         result_id: str,
         chart_type: str,
         title: str,
         x: str,
         series: list[str],
+        labels: dict[str, str] | None = None,
+        units: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Registra pedido de gráfico a ser montado pelo servidor."""
         result = self.result_store.get(result_id)
@@ -447,10 +478,17 @@ class QueryRunner:
             'title': title,
             'x': {
                 'key': x,
-                'label': x,
+                'label': column_label(x, labels),
                 'type': result.column_types.get(x, 'category'),
             },
-            'series': [{'key': s, 'label': s} for s in series],
+            'series': [
+                {
+                    'key': s,
+                    'label': column_label(s, labels),
+                    'unit': (units or {}).get(s) or None,
+                }
+                for s in series
+            ],
             'data': [
                 {
                     col_name: val
@@ -468,6 +506,7 @@ class QueryRunner:
         result_id: str,
         columns: list[str],
         title: str | None = None,
+        labels: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Registra pedido de tabela a ser montada pelo servidor."""
         result = self.result_store.get(result_id)
@@ -485,7 +524,7 @@ class QueryRunner:
             'columns': [
                 {
                     'key': c,
-                    'label': c,
+                    'label': column_label(c, labels),
                     'type': result.column_types.get(c, 'string'),
                 }
                 for c in columns

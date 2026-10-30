@@ -71,6 +71,16 @@ function cssVar(name) {
 
 const PALETTE = () => [1, 2, 3, 4, 5].map((i) => cssVar(`--chart-${i}`));
 
+// Uma série: rótulo e unidade. Várias: só a unidade, se for a mesma em todas.
+function chartYTitle(series) {
+  if (series.length === 1) {
+    const [{ label, unit }] = series;
+    return unit ? `${label} (${unit})` : label;
+  }
+  const [{ unit }] = series;
+  return unit && series.every((serie) => serie.unit === unit) ? unit : '';
+}
+
 const blockRenderers = {
   text(block) {
     const node = el('div', { class: 'block block-text' });
@@ -79,6 +89,7 @@ const blockRenderers = {
   },
 
   chart(block) {
+    const yTitle = chartYTitle(block.series);
     const node = el('div', { class: 'block block-chart' });
     node.append(el('h4', {}, block.title));
     const wrap = el('div', { class: 'canvas-wrap' });
@@ -116,7 +127,7 @@ const blockRenderers = {
             ? {}
             : {
                 x: { title: { display: true, text: block.x.label, color: text }, ticks: { color: text }, grid: { color: grid } },
-                y: { ticks: { color: text }, grid: { color: grid } },
+                y: { title: { display: Boolean(yTitle), text: yTitle, color: text }, ticks: { color: text }, grid: { color: grid } },
               },
         },
       });

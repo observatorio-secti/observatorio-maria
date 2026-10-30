@@ -36,6 +36,7 @@ from observatorio_maria.models import (
 from observatorio_maria.observability.genai import get_tracer
 from observatorio_maria.query import execution as exec_module
 from observatorio_maria.query.errors import QueryCostExceededError
+from observatorio_maria.query.tool import column_label
 from observatorio_maria.schemas import TextBlock
 from observatorio_maria.services.chat import ChatService
 from observatorio_maria.settings import Settings
@@ -1242,3 +1243,134 @@ def test_tool_rules_ask_for_explanation_of_visualizations():
     assert 'principal destaque' in prompt
     assert 'na chamada que pede show_chart' in prompt
     assert 'calls_left chegar a 2' in prompt
+
+
+def _labeled_chart_turn(args):
+    return AIMessage(
+        content='',
+        tool_calls=[
+            {
+                'name': 'show_chart',
+                'args': {
+                    'result_id': 'r1',
+                    'chart_type': 'bar',
+                    'title': 'Orçamento por Ano',
+                    'x': 'ano',
+                    'series': ['orcamento'],
+                    **args,
+                },
+                'id': 'g1',
+            }
+        ],
+    )
+
+
+async def _chart_block(client, session, conversation, fomento_source, args):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[_chart_query_turn(), _labeled_chart_turn(args)]
+        )
+    )
+    blocks = await _ask(client, conversation)
+    return next(b for b in blocks if b['type'] == 'chart')
+
+
+@pytest.mark.asyncio
+async def test_chart_uses_labels_and_units_and_keeps_keys(
+    client, session, conversation, fomento_source
+):
+    chart = await _chart_block(
+        client,
+        session,
+        conversation,
+        fomento_source,
+        {
+            'labels': {'ano': 'Ano de início', 'orcamento': 'Orçamento'},
+            'units': {'orcamento': 'R$'},
+        },
+    )
+
+    assert chart['x'] == {
+        'key': 'ano',
+        'label': 'Ano de início',
+        'type': chart['x']['type'],
+    }
+    assert chart['series'] == [
+        {'key': 'orcamento', 'label': 'Orçamento', 'unit': 'R$'}
+    ]
+    assert 'orcamento' in chart['data'][0]
+
+
+@pytest.mark.asyncio
+async def test_chart_without_labels_uses_readable_key_and_null_unit(
+    client, session, conversation, fomento_source
+):
+    chart = await _chart_block(
+        client,
+        session,
+        conversation,
+        fomento_source,
+        {'labels': {'inexistente': 'Ignorado'}},
+    )
+
+    assert chart['x']['label'] == 'Ano'
+    assert chart['series'] == [
+        {'key': 'orcamento', 'label': 'Orcamento', 'unit': None}
+    ]
+
+
+@pytest.mark.parametrize(
+    ('key', 'labels', 'expected'),
+    [
+        ('total_bolsas', None, 'Total bolsas'),
+        ('total_bolsas', {'total_bolsas': ''}, 'Total bolsas'),
+        ('total_bolsas', {'total_bolsas': 'Bolsas'}, 'Bolsas'),
+        ('_x', None, 'X'),
+    ],
+)
+def test_column_label(key, labels, expected):
+    assert column_label(key, labels) == expected
+
+
+@pytest.mark.asyncio
+async def test_table_uses_labels(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[
+                _chart_query_turn(),
+                AIMessage(
+                    content='',
+                    tool_calls=[
+                        {
+                            'name': 'show_table',
+                            'args': {
+                                'result_id': 'r1',
+                                'columns': ['ano', 'orcamento'],
+                                'labels': {'ano': 'Ano de início'},
+                            },
+                            'id': 't1',
+                        }
+                    ],
+                ),
+            ]
+        )
+    )
+
+    blocks = await _ask(client, conversation)
+
+    table = next(b for b in blocks if b['type'] == 'table')
+    assert [(c['key'], c['label']) for c in table['columns']] == [
+        ('ano', 'Ano de início'),
+        ('orcamento', 'Orcamento'),
+    ]
+
+
+def test_tool_rules_ask_for_readable_labels_and_real_units():
+    prompt = build_system_prompt(source_contexts=['## Fonte'])
+
+    assert 'nomes legíveis em português' in prompt
+    assert 'nunca invente unidades' in prompt

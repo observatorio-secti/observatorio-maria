@@ -582,6 +582,8 @@ class ChatService:
                 title=tc_args.get('title', ''),
                 x=tc_args.get('x', ''),
                 series=tc_args.get('series', []),
+                labels=tc_args.get('labels'),
+                units=tc_args.get('units'),
             )
             return (
                 ToolMessage(content=json.dumps(res), tool_call_id=tc_id),
@@ -593,6 +595,7 @@ class ChatService:
                 result_id=tc_args.get('result_id', ''),
                 columns=tc_args.get('columns', []),
                 title=tc_args.get('title'),
+                labels=tc_args.get('labels'),
             )
             return (
                 ToolMessage(content=json.dumps(res), tool_call_id=tc_id),
