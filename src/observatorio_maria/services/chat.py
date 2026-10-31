@@ -278,6 +278,21 @@ async def get_history(
     return list(result.all())
 
 
+async def count_questions(
+    session: AsyncSession, conversation: Conversation
+) -> int:
+    """Perguntas gravadas na conversa (não usa o modelo)."""
+    count = await session.scalar(
+        select(func.count())
+        .select_from(Message)
+        .where(
+            Message.conversation_id == conversation.id,
+            Message.role == MessageRole.USER,
+        )
+    )
+    return count or 0
+
+
 async def get_consultable_sources_and_contexts(
     session: AsyncSession,
 ) -> tuple[list[CatalogDataSource], list[str]]:
@@ -388,14 +403,7 @@ class ChatService:
         o teto de tokens (quando ligado)."""
         max_questions = self.settings.CONVERSATION_MAX_QUESTIONS
         if max_questions > 0:
-            questions = await self.session.scalar(
-                select(func.count())
-                .select_from(Message)
-                .where(
-                    Message.conversation_id == conversation.id,
-                    Message.role == MessageRole.USER,
-                )
-            )
+            questions = await count_questions(self.session, conversation)
             if questions >= max_questions:
                 noun = 'pergunta' if max_questions == 1 else 'perguntas'
                 raise ConversationQuestionLimitExceededError(

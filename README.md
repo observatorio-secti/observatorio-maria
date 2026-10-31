@@ -228,7 +228,7 @@ As variáveis são lidas do ambiente e do `.env` pelo `Settings` (pydantic-setti
 | GET | `/health` | Verifica a API e o banco |
 | POST | `/conversations` | Cria uma conversa (`title` opcional) |
 | GET | `/conversations?offset=0&limit=20` | Lista conversas, mais recentes primeiro (`limit` ≤ 100) |
-| GET | `/conversations/{id}` | Detalha uma conversa |
+| GET | `/conversations/{id}` | Detalha uma conversa, com `questions_asked` e `questions_limit` (nulo com o limite desligado) |
 | PATCH | `/conversations/{id}` | Renomeia (`{"title": "..."}`) |
 | DELETE | `/conversations/{id}` | Exclui a conversa e as mensagens (204) |
 | GET | `/conversations/{id}/messages` | Histórico em ordem cronológica |
@@ -271,6 +271,8 @@ O bloco `text` vem primeiro e explica as visualizações: o que mostram, o princ
 O modelo pode posicionar cada visualização no texto com `[[bloco:N]]`, usando o `block_index` devolvido pela ferramenta. Nesse caso, `content` tem vários blocos `text`, e o cliente deve renderizar a lista em ordem. Blocos não citados vêm depois do texto, marcadores inválidos são removidos, e o marcador nunca chega ao cliente.
 
 Em `show_chart` e `show_table`, o modelo informa rótulos em `labels` (coluna → rótulo) e, nos gráficos, unidades em `units` (série → unidade). As chaves dos blocos continuam sendo as colunas do resultado. Sem rótulo, a coluna usa a chave legível: `total_bolsas` vira `Total bolsas`. Rótulo de coluna fora do bloco é ignorado.
+
+No bloco `table`, uma coluna tem o tipo `string` quando a chave traz o termo `ano` ou `year` (`ano_inicio`, `start_year`) e todos os valores são inteiros de 1900 a 2100. Assim, clientes não formatam `2020` como `2.020`. Os valores continuam numéricos nas linhas, e a regra também vale para blocos já gravados.
 
 `chart` e `table` têm `truncated`, verdadeiro quando o resultado foi cortado por `QUERY_MAX_ROWS`. Mensagens gravadas sem o campo valem como `false`. Um `LIMIT` escrito na própria consulta não marca o campo.
 
@@ -445,7 +447,7 @@ A Maria implementa múltiplas camadas de proteção para salvaguardar dados de c
    - **Consultas entre fontes:** sem `EXPLAIN` prévio, a proteção vem do `statement_timeout` em cada conexão com as origens, da interrupção do DuckDB em `QUERY_TIMEOUT_SECONDS` e dos limites `QUERY_FEDERATED_MEMORY_LIMIT`, `QUERY_FEDERATED_THREADS` e `QUERY_FEDERATED_MAX_CONCURRENT`. Depois de anexar as origens em `READ_ONLY`, o acesso externo é desligado e a configuração é travada.
    - **Truncamento defensivo por célula:** Textos de células longas são limitados a 2.000 caracteres, prevenindo esgotamento intencional da janela de contexto (*Context Flooding*).
    - **Limites de execução:** Teto máximo de linhas por consulta (`QUERY_MAX_ROWS`), timeout de banco (`QUERY_TIMEOUT_SECONDS`), máximo de consultas SQL por chamada (`QUERY_MAX_PER_CALL`) e orçamento de chamadas ao modelo (`MARIA_AGENT_MAX_MODEL_CALLS`).
-   - **Limite de perguntas por conversa:** Depois de `CONVERSATION_MAX_QUESTIONS` perguntas (padrão 10), a conversa recusa novas mensagens com HTTP 429 e orienta a iniciar outra. O limite não depende do tamanho do contexto das fontes, que com fomento e Simcc leva cada resposta a gastar de 27 a 50 mil tokens.
+   - **Limite de perguntas por conversa:** Depois de `CONVERSATION_MAX_QUESTIONS` perguntas (padrão 10), a conversa recusa novas mensagens com HTTP 429 e orienta a iniciar outra. `GET /conversations/{id}` informa a contagem e o limite, e a demo mostra quantas perguntas restam, com aviso na última. O limite não depende do tamanho do contexto das fontes, que com fomento e Simcc leva cada resposta a gastar de 27 a 50 mil tokens.
    - **Teto de tokens por conversa (opcional):** Com `CONVERSATION_TOKEN_CEILING` maior que zero, a conversa também é bloqueada ao atingir esse total de tokens, como trava de custo. Vem desligado por padrão; `total_tokens` continua sendo contado em toda conversa.
 
 ---

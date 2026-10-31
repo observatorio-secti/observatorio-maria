@@ -46,6 +46,7 @@ from observatorio_maria.query.validator import (
     source_dialect,
     validate_query,
 )
+from observatorio_maria.schemas import is_year_column
 
 
 @dataclass(frozen=True)
@@ -563,6 +564,14 @@ class QueryRunner:
             if c not in cols_set:
                 return {'error': f"Coluna '{c}' não encontrada no resultado."}
 
+        rows = [
+            {
+                col_name: val
+                for col_name, val in zip(result.columns, row, strict=False)
+                if col_name in columns
+            }
+            for row in result.rows
+        ]
         table_block = {
             'type': 'table',
             'title': title,
@@ -570,18 +579,15 @@ class QueryRunner:
                 {
                     'key': c,
                     'label': column_label(c, labels),
-                    'type': table_column_type(result.column_types.get(c)),
+                    'type': (
+                        'string'
+                        if is_year_column(c, (row.get(c) for row in rows))
+                        else table_column_type(result.column_types.get(c))
+                    ),
                 }
                 for c in columns
             ],
-            'rows': [
-                {
-                    col_name: val
-                    for col_name, val in zip(result.columns, row, strict=False)
-                    if col_name in columns
-                }
-                for row in result.rows
-            ],
+            'rows': rows,
             'truncated': result.truncated,
             'origin': result.origin,
         }

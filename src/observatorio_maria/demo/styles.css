@@ -152,6 +152,9 @@ main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 
 .banner { margin: 0 16px; padding: 8px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn-text); font-size: 0.85rem; }
 
+.question-counter { margin: 8px 16px 0; font-size: 0.8rem; color: var(--muted); }
+.question-counter.warn { padding: 8px 12px; border-radius: 8px; background: var(--warn-bg); color: var(--warn-text); }
+
 .block-suggestions { display: grid; gap: 6px; margin-top: 10px; }
 .message:not(:last-child) .block-suggestions { display: none; }
 .block-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; }

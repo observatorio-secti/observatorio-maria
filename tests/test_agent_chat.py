@@ -42,7 +42,7 @@ from observatorio_maria.observability.genai import get_tracer
 from observatorio_maria.query import execution as exec_module
 from observatorio_maria.query.errors import QueryCostExceededError
 from observatorio_maria.query.tool import build_origin, column_label
-from observatorio_maria.schemas import TextBlock
+from observatorio_maria.schemas import TextBlock, is_year_column
 from observatorio_maria.services.chat import ChatService
 from observatorio_maria.settings import Settings
 from tests.conftest import FailingChatModel, ScriptedToolChatModel
@@ -2310,3 +2310,122 @@ async def test_old_block_shown_again_comes_out_masked(
 
     table = next(b for b in blocks if b['type'] == 'table')
     assert table['rows'] == [{'resumo': 'CPF [CPF MASCARADO]'}]
+
+
+def _year_table_turns(sql, column):
+    return [
+        AIMessage(
+            content='',
+            tool_calls=[
+                {
+                    'name': 'query_data',
+                    'args': {'source': 'fomento', 'sql': sql},
+                    'id': 'q1',
+                }
+            ],
+        ),
+        AIMessage(
+            content='',
+            tool_calls=[
+                {
+                    'name': 'show_table',
+                    'args': {'result_id': 'r1', 'columns': [column]},
+                    'id': 't1',
+                }
+            ],
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_year_column_is_text_in_new_table(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=_year_table_turns(
+                'SELECT ano AS year FROM projetos', 'year'
+            )
+        )
+    )
+
+    blocks = await _ask(client, conversation)
+
+    table = next(b for b in blocks if b['type'] == 'table')
+    assert table['columns'][0]['type'] == 'string'
+    assert table['rows'][0]['year'] == 2024  # noqa: PLR2004
+
+
+@pytest.mark.asyncio
+async def test_year_column_is_text_in_stream_delta(
+    client, session, conversation, fomento_source
+):
+    await setup_catalog(session, fomento_source)
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=_year_table_turns(
+                'SELECT ano AS ano_inicio FROM projetos', 'ano_inicio'
+            )
+        )
+    )
+
+    res = await client.post(
+        f'/conversations/{conversation["id"]}/messages/stream',
+        json={'content': 'Liste os anos'},
+    )
+
+    block = next(
+        data['block']
+        for name, data in parse_sse(res.text)
+        if name == 'content.delta' and data['type'] == 'table'
+    )
+    assert block['columns'][0]['type'] == 'string'
+
+
+@pytest.mark.asyncio
+async def test_saved_year_column_is_read_as_text(
+    client, session, conversation
+):
+    session.add(
+        Message(
+            conversation_id=UUID(conversation['id']),
+            role=MessageRole.ASSISTANT,
+            content=[
+                {
+                    'type': 'table',
+                    'columns': [
+                        {'key': 'ano', 'label': 'Ano', 'type': 'number'}
+                    ],
+                    'rows': [{'ano': 2019}, {'ano': 2020}],
+                }
+            ],
+        )
+    )
+    await session.commit()
+
+    res = await client.get(f'/conversations/{conversation["id"]}/messages')
+
+    table = res.json()['messages'][0]['content'][0]
+    assert table['columns'][0]['type'] == 'string'
+    assert table['rows'][0]['ano'] == 2019  # noqa: PLR2004
+
+
+@pytest.mark.parametrize(
+    ('key', 'values', 'expected'),
+    [
+        ('year', [2020, 2026], True),
+        ('ano_inicio', [2020.0], True),
+        ('start_year', [2021, None, 2022], True),
+        ('ANO', [2020], True),
+        ('valor_por_ano', [125000, 2020], False),
+        ('ano', [2020, 2020.5], False),
+        ('anos_de_vigencia', [2020], False),
+        ('plano', [2020], False),
+        ('ano', [None], False),
+        ('ano', ['2020'], False),
+        ('ano', [True], False),
+    ],
+)
+def test_is_year_column(key, values, expected):
+    assert is_year_column(key, values) is expected

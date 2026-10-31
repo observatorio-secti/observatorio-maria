@@ -411,6 +411,23 @@ function showCurrentHeader() {
     ? state.current.title || 'Nova conversa'
     : 'Nova conversa';
   $('chat-actions').hidden = !state.current;
+  showQuestionCounter();
+}
+
+function showQuestionCounter() {
+  const counter = $('question-counter');
+  const limit = state.current?.questions_limit;
+  counter.hidden = !limit;
+  if (!limit) return;
+  const remaining = Math.max(limit - state.current.questions_asked, 0);
+  counter.classList.toggle('warn', remaining <= 1);
+  if (remaining === 0) {
+    counter.textContent = 'Limite de perguntas atingido. Use o botão "+ Nova conversa".';
+  } else if (remaining === 1) {
+    counter.textContent = 'Última pergunta desta conversa.';
+  } else {
+    counter.textContent = `Restam ${remaining} de ${limit} perguntas`;
+  }
 }
 
 // --- Sugestões de perguntas --------------------------------------------------

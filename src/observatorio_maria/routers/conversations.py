@@ -15,6 +15,7 @@ from observatorio_maria.schemas import (
     ChatExchange,
     ContentDeltaPublic,
     ConversationCreate,
+    ConversationDetail,
     ConversationList,
     ConversationPublic,
     ConversationUpdate,
@@ -34,9 +35,11 @@ from observatorio_maria.services.chat import (
     ConversationTokenLimitExceededError,
     ModelInvocationError,
     UserMessageCreated,
+    count_questions,
     get_chat_service,
     get_history,
 )
+from observatorio_maria.settings import Settings
 
 router = APIRouter(prefix='/conversations', tags=['conversations'])
 
@@ -102,9 +105,15 @@ async def list_conversations(
     return {'conversations': conversations.all(), 'total': total}
 
 
-@router.get('/{conversation_id}', response_model=ConversationPublic)
-async def read_conversation(conversation: CurrentConversation):
-    return conversation
+@router.get('/{conversation_id}', response_model=ConversationDetail)
+async def read_conversation(
+    conversation: CurrentConversation, session: Session
+):
+    return ConversationDetail(
+        **ConversationPublic.model_validate(conversation).model_dump(),
+        questions_asked=await count_questions(session, conversation),
+        questions_limit=Settings().CONVERSATION_MAX_QUESTIONS or None,
+    )
 
 
 @router.patch('/{conversation_id}', response_model=ConversationPublic)

@@ -1,8 +1,17 @@
+import re
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from decimal import Decimal
+from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from observatorio_maria.catalog.yaml_io import ColumnValue, EnvName, Slug
 from observatorio_maria.models import (
@@ -45,6 +54,15 @@ class ConversationPublic(BaseModel):
     total_tokens: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class ConversationDetail(ConversationPublic):
+    questions_asked: int = Field(
+        description='Mensagens do usuário gravadas na conversa.'
+    )
+    questions_limit: int | None = Field(
+        description='Limite de perguntas; nulo quando está desligado.'
+    )
 
 
 class ConversationList(BaseModel):
@@ -125,6 +143,30 @@ class TableColumn(BaseModel):
         return 'string' if value == 'category' else value
 
 
+YEAR_KEY = re.compile(r'(?:^|_)(?:ano|year)(?:_|$)', re.IGNORECASE)
+MIN_YEAR = 1900
+MAX_YEAR = 2100
+
+
+def _is_year(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float, Decimal))
+        and not isinstance(value, bool)
+        and MIN_YEAR <= value <= MAX_YEAR
+        and value % 1 == 0
+    )
+
+
+def is_year_column(key: str, values: Iterable[Any]) -> bool:
+    """Coluna de ano: o nome tem o termo e os valores são anos inteiros."""
+    present = [value for value in values if value is not None]
+    return (
+        bool(present)
+        and YEAR_KEY.search(key) is not None
+        and all(_is_year(value) for value in present)
+    )
+
+
 class TableBlock(BaseModel):
     type: Literal['table'] = 'table'
     title: str | None = None
@@ -135,6 +177,16 @@ class TableBlock(BaseModel):
         description='O resultado foi cortado pelo limite de linhas.',
     )
     origin: BlockOrigin | None = None
+
+    @model_validator(mode='after')
+    def read_year_columns_as_text(self) -> Self:
+        # Blocos gravados antes da correção têm o ano como `number`.
+        for column in self.columns:
+            if column.type == 'number' and is_year_column(
+                column.key, (row.get(column.key) for row in self.rows)
+            ):
+                column.type = 'string'
+        return self
 
 
 class SuggestionsBlock(BaseModel):
