@@ -20,7 +20,7 @@
       </div>
       <div class="status" aria-live="polite">
         <span class="pill" id="status-api">API…</span>
-        <a class="pill link" href="../docs" target="_blank">/docs ↗</a>
+        <a class="pill link" href="../docs" target="_blank">/docs</a>
       </div>
     </header>
 
@@ -90,163 +90,181 @@
 
       <!-- Catálogo de dados: o que a Maria enxerga e pode consultar -->
       <section class="panel" id="tab-catalog">
-        <div class="catalog-toolbar card">
-          <label class="field inline">
-            <span>Fonte</span>
-            <select id="cat-datasource" aria-label="Fonte de dados"></select>
-          </label>
-          <label class="switch" title="Uma fonte desativada não chega ao modelo">
-            <input type="checkbox" id="cat-enabled" aria-label="Fonte ativa" />
-            <span>Ativa</span>
-          </label>
-          <label class="switch" title="Quando a verificação detecta defasagem, sincroniza na hora (o que é novo entra oculto)">
-            <input type="checkbox" id="cat-auto-sync" aria-label="Sincronizar automaticamente" />
-            <span>Sincronizar automaticamente</span>
-          </label>
-          <span class="pill" id="cat-schema-status" aria-live="polite"></span>
-          <div class="toolbar-actions">
-            <button class="ghost" id="cat-check">Verificar agora</button>
-            <button class="primary" id="cat-sync">Sincronizar schema</button>
-            <a class="ghost button" id="cat-export" download>Baixar YAML</a>
-          </div>
-          <p class="muted small" id="cat-summary"></p>
-        </div>
+        <nav class="source-tabs" id="cat-source-tabs" role="tablist" aria-label="Bancos de dados"></nav>
 
         <div class="banner catalog-banner" id="cat-banner" hidden></div>
-        <div class="card drift-card" id="cat-drift" hidden></div>
-        <div class="card sync-report" id="cat-report" hidden></div>
 
         <p class="empty" id="cat-empty" hidden>
           Nenhuma fonte cadastrada. Carregue o seed com <code>task seed</code>.
         </p>
 
-        <div class="catalog-layout" id="cat-layout" hidden>
-          <aside class="card entity-pane">
-            <div class="entity-filters">
-              <input type="search" id="cat-search" placeholder="Buscar entidade…" aria-label="Buscar entidade" />
-              <select id="cat-filter" aria-label="Filtrar entidades">
-                <option value="all">Todas</option>
-                <option value="visible">Visíveis</option>
-                <option value="hidden">Ocultas</option>
-                <option value="missing">Ausentes na origem</option>
-              </select>
+        <!-- Um banco: tudo aqui pertence à fonte do cabeçalho -->
+        <div class="source-area" id="cat-source-area" hidden>
+          <header class="card source-header">
+            <div class="source-title">
+              <div>
+                <h2 id="cat-source-name"></h2>
+                <code id="cat-source-id"></code>
+              </div>
+              <span class="pill" id="cat-schema-status" aria-live="polite"></span>
+              <div class="toolbar-actions">
+                <button class="ghost" id="cat-check">Verificar agora</button>
+                <button class="primary" id="cat-sync">Sincronizar schema</button>
+              </div>
             </div>
-            <ul class="entity-list" id="cat-entities"></ul>
-          </aside>
+            <p class="muted small" id="cat-summary"></p>
+            <div class="banner notice" id="cat-source-notice" hidden></div>
+            <p class="muted small hint" id="cat-auto-sync-hint" hidden></p>
+          </header>
 
-          <div class="card detail-pane">
-            <nav class="subtabs" role="tablist">
-              <button role="tab" class="subtab active" data-view="entity">Entidade</button>
-              <button role="tab" class="subtab" data-view="relationships">Relacionamentos</button>
-              <button role="tab" class="subtab" data-view="context">O que a Maria enxerga</button>
-              <button role="tab" class="subtab" data-view="source">Fonte</button>
-              <button role="tab" class="subtab" data-view="concepts">Conceitos</button>
-            </nav>
+          <div class="card drift-card" id="cat-drift" hidden></div>
+          <div class="card sync-report" id="cat-report" hidden></div>
 
-            <div class="view active" id="view-entity">
-              <p class="muted" id="cat-entity-empty">Selecione uma entidade à esquerda.</p>
-              <form id="cat-entity-form" hidden>
-                <div class="entity-heading">
-                  <h3 id="cat-entity-title"></h3>
-                  <div class="badges" id="cat-entity-badges"></div>
-                </div>
-                <div class="switches">
-                  <label class="switch"><input type="checkbox" name="visible" /><span>Visível para o modelo</span></label>
-                  <label class="switch"><input type="checkbox" name="queryable" /><span>Consultável</span></label>
-                </div>
-                <div class="form-grid">
-                  <label class="field"><span>Rótulo</span><input name="label" maxlength="200" /></label>
-                  <label class="field"><span>Sinônimos <em class="muted">(separados por vírgula)</em></span><input name="synonyms" /></label>
-                  <label class="field"><span>Conceito <em class="muted">(assunto também em outras fontes)</em></span><select name="concept_id"></select></label>
-                  <label class="field wide"><span>Descrição</span><textarea name="description" rows="2"></textarea></label>
-                </div>
-                <div class="form-actions">
-                  <button class="primary" type="submit">Salvar entidade</button>
-                  <span class="muted small" id="cat-entity-saved" aria-live="polite"></span>
-                </div>
+          <div class="catalog-layout">
+            <aside class="card entity-pane">
+              <input type="search" id="cat-search" placeholder="Buscar entidade…" aria-label="Buscar entidade" />
+              <button type="button" class="banner-action more-toggle" id="cat-toggle-hidden" aria-pressed="false"></button>
+              <ul class="entity-list" id="cat-entities"></ul>
+            </aside>
 
-                <h4>Colunas</h4>
+            <div class="card detail-pane">
+              <nav class="subtabs" role="tablist">
+                <button role="tab" class="subtab active" data-view="entity">Entidade</button>
+                <button role="tab" class="subtab" data-view="relationships">Relacionamentos</button>
+                <button role="tab" class="subtab" data-view="context">O que a Maria enxerga</button>
+                <button role="tab" class="subtab" data-view="source">Fonte</button>
+              </nav>
+
+              <div class="view active" id="view-entity">
+                <p class="muted" id="cat-entity-empty">Selecione uma entidade à esquerda.</p>
+                <form id="cat-entity-form" hidden>
+                  <div class="entity-heading">
+                    <h3 id="cat-entity-title"></h3>
+                    <div class="badges" id="cat-entity-badges"></div>
+                  </div>
+                  <div class="banner notice" id="cat-entity-notice" hidden></div>
+                  <div class="switches">
+                    <label class="switch"><input type="checkbox" name="visible" /><span>Usar nas respostas</span></label>
+                  </div>
+                  <div class="form-grid">
+                    <label class="field"><span>Rótulo</span><input name="label" maxlength="200" /></label>
+                    <label class="field wide"><span>Descrição</span><textarea name="description" rows="2"></textarea></label>
+                  </div>
+                  <details class="advanced">
+                    <summary>Opções avançadas</summary>
+                    <div class="switches">
+                      <label class="switch"><input type="checkbox" name="queryable" /><span>Consultável <em class="muted">(desligado, a Maria conhece a entidade, mas não a consulta)</em></span></label>
+                    </div>
+                    <div class="form-grid">
+                      <label class="field"><span>Sinônimos <em class="muted">(separados por vírgula)</em></span><input name="synonyms" /></label>
+                      <label class="field"><span>Conceito <em class="muted">(assunto também em outras fontes)</em></span><select name="concept_id"></select></label>
+                    </div>
+                  </details>
+                  <div class="form-actions">
+                    <button class="primary" type="submit">Salvar entidade</button>
+                    <span class="muted small" id="cat-entity-saved" aria-live="polite"></span>
+                  </div>
+
+                  <div class="section-heading">
+                    <h4>Colunas</h4>
+                    <button type="button" class="banner-action more-toggle" id="cat-toggle-columns" aria-pressed="false"></button>
+                  </div>
+                  <div class="table-wrap">
+                    <table class="columns-table entity-columns">
+                      <thead>
+                        <tr><th>Coluna</th><th>Tipo</th><th>Visível</th><th>Descrição</th><th></th></tr>
+                      </thead>
+                      <tbody id="cat-columns"></tbody>
+                    </table>
+                  </div>
+                </form>
+              </div>
+
+              <div class="view" id="view-relationships">
+                <p class="muted small">Ligações usadas pelo modelo para cruzar entidades. Só aparecem no contexto quando as duas pontas estão visíveis.</p>
                 <div class="table-wrap">
                   <table class="columns-table">
                     <thead>
-                      <tr><th>Coluna</th><th>Tipo</th><th>Visível</th><th>Acesso</th><th>Pesquisável</th><th title="Automático: só categorias curtas entram no prompt">Valores no contexto</th><th>Descrição</th></tr>
+                      <tr><th>Ligado</th><th>De</th><th>Para</th><th>Origem</th><th>Descrição</th></tr>
                     </thead>
-                    <tbody id="cat-columns"></tbody>
+                    <tbody id="cat-relationships"></tbody>
                   </table>
                 </div>
-              </form>
-            </div>
-
-            <div class="view" id="view-relationships">
-              <p class="muted small">Ligações usadas pelo modelo para cruzar entidades. Só aparecem no contexto quando as duas pontas estão visíveis.</p>
-              <div class="table-wrap">
-                <table class="columns-table">
-                  <thead>
-                    <tr><th>Ligado</th><th>De</th><th>Para</th><th>Origem</th><th>Descrição</th></tr>
-                  </thead>
-                  <tbody id="cat-relationships"></tbody>
-                </table>
               </div>
-            </div>
 
-            <div class="view" id="view-context">
-              <p class="muted small">Texto exato que o modelo recebe sobre esta fonte, considerando todos os interruptores.</p>
-              <div class="card drift-card" id="cat-rejected-examples" hidden></div>
-              <pre class="context-preview" id="cat-context"></pre>
-            </div>
+              <div class="view" id="view-context">
+                <p class="muted small">Texto exato que o modelo recebe sobre esta fonte, com a configuração atual.</p>
+                <div class="card drift-card" id="cat-rejected-examples" hidden></div>
+                <pre class="context-preview" id="cat-context"></pre>
+              </div>
 
-            <form class="view" id="view-source">
-              <div class="form-grid">
-                <label class="field"><span>Nome</span><input name="name" maxlength="200" required /></label>
-                <label class="field"><span>Variável de conexão</span><input name="connection_env" required /></label>
-                <label class="field wide"><span>Descrição</span><textarea name="description" rows="2"></textarea></label>
-                <label class="field wide"><span>Instruções de negócio para a IA</span><textarea name="instructions" rows="7"></textarea></label>
-              </div>
-              <div class="form-actions">
-                <button class="primary" type="submit">Salvar fonte</button>
-                <span class="muted small" id="cat-source-saved" aria-live="polite"></span>
-              </div>
-            </form>
-
-            <div class="view" id="view-concepts">
-              <p class="muted small">Assuntos que aparecem em mais de uma fonte com significados diferentes. A política diz ao modelo qual fonte usar e como citar a outra. Vale para todas as fontes.</p>
-              <ul class="concept-list" id="cat-concepts"></ul>
-              <div class="form-actions">
-                <button class="ghost" type="button" id="cat-concept-new">Novo conceito</button>
-              </div>
-              <form id="cat-concept-form" hidden>
-                <h4 id="cat-concept-title"></h4>
+              <form class="view" id="view-source">
+                <div class="switches stacked">
+                  <label class="switch"><input type="checkbox" id="cat-enabled" /><span>Fonte ativa <em class="muted">(desligada, não chega ao modelo)</em></span></label>
+                  <label class="switch"><input type="checkbox" id="cat-auto-sync" /><span>Sincronizar automaticamente <em class="muted">(o que é novo entra oculto)</em></span></label>
+                </div>
                 <div class="form-grid">
-                  <label class="field"><span>Identificador <em class="muted">(minúsculas, não muda depois)</em></span><input name="id" pattern="[a-z][a-z0-9_\-]*" maxlength="64" required /></label>
-                  <label class="field"><span>Rótulo</span><input name="label" maxlength="200" required /></label>
-                  <label class="field wide"><span>Sinônimos <em class="muted">(separados por vírgula)</em></span><input name="synonyms" /></label>
+                  <label class="field"><span>Nome</span><input name="name" maxlength="200" required /></label>
+                  <label class="field"><span>Variável de conexão</span><input name="connection_env" required /></label>
                   <label class="field wide"><span>Descrição</span><textarea name="description" rows="2"></textarea></label>
-                  <label class="field wide"><span>Política de resposta para a IA</span><textarea name="instructions" rows="6"></textarea></label>
+                  <label class="field wide"><span>Instruções de negócio para a IA</span><textarea name="instructions" rows="7"></textarea></label>
                 </div>
                 <div class="form-actions">
-                  <button class="primary" type="submit">Salvar conceito</button>
-                  <button class="ghost" type="button" id="cat-concept-cancel">Cancelar</button>
-                  <span class="muted small" id="cat-concept-saved" aria-live="polite"></span>
+                  <button class="primary" type="submit">Salvar fonte</button>
+                  <a class="ghost button" id="cat-export" download>Baixar YAML</a>
+                  <span class="muted small" id="cat-source-saved" aria-live="polite"></span>
                 </div>
               </form>
-              <h4>Ligações entre fontes</h4>
-              <p class="muted small">Colunas equivalentes em duas fontes. Consultas entre fontes só juntam por estas ligações; a cobertura é medida na primeira coluna.</p>
-              <ul class="concept-list" id="cat-links"></ul>
-              <form id="cat-link-form">
-                <div class="form-grid">
-                  <label class="field"><span>Coluna de origem <em class="muted">(fonte:schema.entidade.coluna)</em></span><input name="source" required placeholder="fomento:public.pesquisadores.lattes" /></label>
-                  <label class="field"><span>Coluna na outra fonte</span><input name="target" required placeholder="simcc:public.researcher.lattes_id" /></label>
-                  <label class="field wide"><span>Descrição</span><input name="description" /></label>
-                </div>
-                <div class="form-actions">
-                  <button class="ghost" type="submit">Criar ligação</button>
-                  <span class="muted small" id="cat-link-saved" aria-live="polite"></span>
-                </div>
-              </form>
-              <h4>O que a Maria enxerga</h4>
-              <pre class="context-preview" id="cat-concepts-context"></pre>
             </div>
           </div>
+        </div>
+
+        <!-- Entre fontes: o que vale para mais de um banco -->
+        <div class="card shared-area" id="cat-shared-area" hidden>
+          <div class="banner notice" id="cat-cross-notice" hidden></div>
+
+          <h3>Conceitos</h3>
+          <p class="muted small">Assuntos que aparecem em mais de uma fonte com significados diferentes. A política diz ao modelo qual fonte usar e como citar a outra.</p>
+          <ul class="concept-list" id="cat-concepts"></ul>
+          <div class="form-actions">
+            <button class="ghost" type="button" id="cat-concept-new">Novo conceito</button>
+          </div>
+          <form id="cat-concept-form" hidden>
+            <h4 id="cat-concept-title"></h4>
+            <div class="form-grid">
+              <label class="field"><span>Identificador <em class="muted">(minúsculas, não muda depois)</em></span><input name="id" pattern="[a-z][a-z0-9_\-]*" maxlength="64" required /></label>
+              <label class="field"><span>Rótulo</span><input name="label" maxlength="200" required /></label>
+              <label class="field wide"><span>Sinônimos <em class="muted">(separados por vírgula)</em></span><input name="synonyms" /></label>
+              <label class="field wide"><span>Descrição</span><textarea name="description" rows="2"></textarea></label>
+              <label class="field wide"><span>Política de resposta para a IA</span><textarea name="instructions" rows="6"></textarea></label>
+            </div>
+            <div class="form-actions">
+              <button class="primary" type="submit">Salvar conceito</button>
+              <button class="ghost" type="button" id="cat-concept-cancel">Cancelar</button>
+              <span class="muted small" id="cat-concept-saved" aria-live="polite"></span>
+            </div>
+          </form>
+
+          <h3>Ligações entre fontes</h3>
+          <p class="muted small">Colunas equivalentes em duas fontes. Consultas entre fontes só juntam por estas ligações; a cobertura é medida na primeira coluna.</p>
+          <ul class="concept-list" id="cat-links"></ul>
+          <details class="advanced" id="cat-link-details">
+            <summary>Nova ligação</summary>
+            <form id="cat-link-form">
+              <div class="form-grid">
+                <label class="field"><span>Coluna de origem <em class="muted">(fonte:schema.entidade.coluna)</em></span><input name="source" required placeholder="fomento:public.pesquisadores.lattes" /></label>
+                <label class="field"><span>Coluna na outra fonte</span><input name="target" required placeholder="simcc:public.researcher.lattes_id" /></label>
+                <label class="field wide"><span>Descrição</span><input name="description" /></label>
+              </div>
+              <div class="form-actions">
+                <button class="ghost" type="submit">Criar ligação</button>
+                <span class="muted small" id="cat-link-saved" aria-live="polite"></span>
+              </div>
+            </form>
+          </details>
+
+          <h3>O que a Maria enxerga</h3>
+          <pre class="context-preview" id="cat-concepts-context"></pre>
         </div>
       </section>
     </main>

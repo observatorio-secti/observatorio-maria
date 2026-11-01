@@ -3,15 +3,21 @@
 
 const catalog = {
   datasources: [],
+  area: null, // id da fonte aberta ou SHARED_AREA
   datasource: null,
   entities: [],
   entity: null,
+  showHidden: false, // lista as entidades ocultas
+  showHiddenColumns: false, // lista as colunas ocultas
+  touchedColumns: new Set(), // colunas ocultadas agora seguem à vista até trocar de entidade
   view: 'entity',
   concepts: [],
   editingConcept: null, // id do conceito em edição; '' para um novo
   loaded: false,
-  expanded: new Set(), // colunas com o editor de valores aberto
+  expanded: new Set(), // colunas com as opções abertas
 };
+
+const SHARED_AREA = 'shared';
 
 const KIND_LABELS = { table: 'tabela', view: 'view', materialized_view: 'view materializada' };
 
@@ -77,6 +83,34 @@ function badge(text, kind = '') {
   return el('span', { class: `badge ${kind}`.trim() }, text);
 }
 
+function actionButton(label, onClick) {
+  const button = el('button', { type: 'button', class: 'banner-action' }, label);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+// Aviso de algo desligado, com os botões que resolvem; sem mensagem, some.
+function setNotice(id, message, actions = []) {
+  const node = $(id);
+  node.hidden = !message;
+  node.replaceChildren(
+    ...(message ? [el('span', {}, message), ...actions.map(([label, onClick]) => actionButton(label, onClick))] : [])
+  );
+}
+
+function setHiddenToggle(id, shown, total) {
+  const button = $(id);
+  button.hidden = !total;
+  button.setAttribute('aria-pressed', String(shown));
+  button.textContent = shown ? 'Esconder ocultas' : `Mostrar ocultas (${total})`;
+}
+
+// A cor segue a posição da fonte na lista, usando os tokens de gráfico dos dois temas.
+function sourceColor(id) {
+  const index = catalog.datasources.findIndex((d) => d.id === id);
+  return `var(--chart-${(index % 5) + 1})`;
+}
+
 // --- Fonte de dados ----------------------------------------------------------
 
 function base() {
@@ -87,28 +121,68 @@ async function loadDatasources() {
   const data = await attempt(() => api('catalog/datasources'));
   if (!data) return;
   catalog.datasources = data.datasources;
-  const select = $('cat-datasource');
-  select.replaceChildren(...data.datasources.map((d) => el('option', { value: d.id }, d.name)));
   $('cat-empty').hidden = data.datasources.length > 0;
-  $('cat-layout').hidden = data.datasources.length === 0;
-  document.querySelector('.catalog-toolbar').hidden = data.datasources.length === 0;
-  if (data.datasources.length) await selectDatasource(catalog.datasource?.id ?? data.datasources[0].id);
+  if (data.datasources.length) await selectArea(catalog.area ?? data.datasources[0].id);
+  else renderSourceTabs();
+}
+
+function renderSourceTabs() {
+  const tab = (area, label, color, inactive = false) => {
+    const button = el('button', {
+      type: 'button',
+      role: 'tab',
+      class: 'source-tab',
+      'aria-selected': String(catalog.area === area),
+    });
+    button.style.setProperty('--source-color', color);
+    button.append(label);
+    if (inactive) button.append(el('small', {}, 'inativa'));
+    button.addEventListener('click', () => selectArea(area));
+    return button;
+  };
+  const sources = catalog.datasources.map((d) => tab(d.id, d.name, sourceColor(d.id), !d.enabled));
+  $('cat-source-tabs').replaceChildren(
+    ...(sources.length ? [...sources, tab(SHARED_AREA, 'Entre fontes', 'var(--muted)')] : [])
+  );
+}
+
+async function selectArea(area) {
+  if (area !== SHARED_AREA) return selectDatasource(area);
+  catalog.area = area;
+  $('cat-source-area').hidden = true;
+  $('cat-shared-area').hidden = false;
+  renderSourceTabs();
+  await loadConcepts();
+  await refreshLinks();
 }
 
 function renderDatasource() {
   const d = catalog.datasource;
-  $('cat-datasource').value = d.id;
+  $('cat-source-area').style.setProperty('--source-color', sourceColor(d.id));
+  $('cat-source-name').textContent = d.name;
+  $('cat-source-id').textContent = d.id;
   $('cat-enabled').checked = d.enabled;
   $('cat-auto-sync').checked = d.auto_sync;
   const synced = d.last_synced_at ? `sincronizada em ${formatDate(d.last_synced_at)}` : 'nunca sincronizada';
   const checked = d.last_checked_at ? `verificada em ${formatDate(d.last_checked_at)}` : 'nunca verificada';
+  const queryable = d.entities_queryable === d.entities_visible ? '' : ` · ${d.entities_queryable} consultáveis`;
   $('cat-summary').textContent =
-    `${d.entities_total} entidades · ${d.entities_visible} visíveis · ` +
-    `${d.entities_queryable} consultáveis · ${synced} · ${checked} · conexão em ${d.connection_env}`;
+    `${d.entities_visible} de ${d.entities_total} entidades em uso${queryable} · ${synced} · ${checked}`;
   const [label, kind] = SCHEMA_STATUS[d.schema_status] ?? SCHEMA_STATUS.unknown;
   const pill = $('cat-schema-status');
   pill.textContent = label;
   pill.className = `pill ${kind}`.trim();
+  setNotice(
+    'cat-source-notice',
+    d.enabled ? '' : 'Fonte inativa: a Maria não usa este banco, e o schema dele não é verificado.',
+    [['Ativar fonte', () => patchDatasource({ enabled: true })]]
+  );
+  const hint = $('cat-auto-sync-hint');
+  hint.hidden = d.auto_sync;
+  hint.replaceChildren(
+    'Sincronização automática desligada: pode ser ligada para aplicar as mudanças da origem assim que forem detectadas.',
+    actionButton('Ligar', () => patchDatasource({ auto_sync: true }))
+  );
   renderDrift();
   $('cat-export').href = new URL(`${base()}/export`, API_ROOT);
 
@@ -120,13 +194,19 @@ function renderDatasource() {
 }
 
 async function selectDatasource(id) {
+  catalog.area = id;
+  renderSourceTabs();
   const datasource = await attempt(() => api(`catalog/datasources/${encodeURIComponent(id)}`));
-  if (!datasource) return;
+  if (!datasource || catalog.area !== id) return; // outra aba foi aberta nesse meio-tempo
   if (catalog.datasource?.id !== id) {
     catalog.entity = null;
+    catalog.showHidden = false;
+    $('cat-search').value = '';
     $('cat-report').hidden = true;
   }
   catalog.datasource = datasource;
+  $('cat-shared-area').hidden = true;
+  $('cat-source-area').hidden = false;
   renderDatasource();
   await loadEntities();
   await refreshView();
@@ -140,11 +220,17 @@ async function refreshSummary() {
   }
 }
 
-async function patchDatasource(changes) {
-  const datasource = await attempt(() => api(base(), { method: 'PATCH', body: JSON.stringify(changes) }));
+async function patchDatasource(changes, id = catalog.datasource.id) {
+  const datasource = await attempt(() =>
+    api(`catalog/datasources/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(changes) })
+  );
   if (datasource) {
-    catalog.datasource = datasource;
-    renderDatasource();
+    catalog.datasources = catalog.datasources.map((d) => (d.id === id ? datasource : d));
+    renderSourceTabs();
+    if (catalog.datasource?.id === id) {
+      catalog.datasource = datasource;
+      renderDatasource();
+    }
     if (catalog.view === 'context') await refreshView();
   }
   return datasource;
@@ -258,15 +344,14 @@ async function loadEntities() {
 }
 
 function entityMatches(entity) {
-  const filter = $('cat-filter').value;
   const term = $('cat-search').value.trim().toLowerCase();
-  if (filter === 'visible' && !entity.visible) return false;
-  if (filter === 'hidden' && entity.visible) return false;
-  if (filter === 'missing' && entity.present) return false;
-  return !term || `${entity.name} ${entity.label ?? ''}`.toLowerCase().includes(term);
+  if (term) return `${entity.name} ${entity.label ?? ''}`.toLowerCase().includes(term);
+  // A entidade aberta fica na lista mesmo depois de ser ocultada.
+  return entity.visible || catalog.showHidden || entity.id === catalog.entity?.id;
 }
 
 function renderEntityList() {
+  setHiddenToggle('cat-toggle-hidden', catalog.showHidden, catalog.entities.filter((e) => !e.visible).length);
   const list = $('cat-entities');
   const items = catalog.entities.filter(entityMatches).map((entity) => {
     const li = el('li', {
@@ -275,23 +360,28 @@ function renderEntityList() {
     const name = el('div', { class: 'entity-name' });
     name.append(el('strong', {}, entity.label ?? entity.name));
     const kind = KIND_LABELS[entity.kind] ?? 'sem sincronizar';
-    name.append(el('small', {}, `${entity.name} · ${kind}${entity.queryable ? ' · consultável' : ''}`));
+    name.append(el('small', {}, `${entity.name} · ${kind}`));
     li.append(name);
     if (!entity.present) li.append(badge('ausente', 'warn'));
-    li.append(
-      switchInput(entity.visible, (checked) => patchEntity(entity.id, { visible: checked }), {
-        label: `Visível: ${entity.name}`,
-      })
-    );
+    if (!entity.visible) li.append(badge('oculta'));
+    else if (!entity.queryable) li.append(badge('só contexto'));
     li.addEventListener('click', () => selectEntity(entity.id, { show: true }));
     return li;
   });
-  list.replaceChildren(...(items.length ? items : [el('li', { class: 'muted' }, 'Nenhuma entidade.')]));
+  const empty = catalog.entities.length
+    ? 'Nenhuma entidade encontrada.'
+    : 'Nenhuma entidade. Sincronize a fonte.';
+  list.replaceChildren(...(items.length ? items : [el('li', { class: 'muted' }, empty)]));
 }
 
-async function selectEntity(id, { show = false } = {}) {
+async function selectEntity(id, { show = false, revealColumns = false } = {}) {
   const entity = await attempt(() => api(`catalog/entities/${id}`));
   if (!entity) return;
+  if (catalog.entity?.id !== id) {
+    catalog.showHiddenColumns = false;
+    catalog.touchedColumns.clear();
+  }
+  if (revealColumns) catalog.showHiddenColumns = true;
   catalog.entity = entity;
   renderEntityList();
   renderEntity();
@@ -314,14 +404,42 @@ function renderEntity() {
   form.visible.checked = entity.visible;
   form.queryable.checked = entity.queryable;
   form.queryable.disabled = !entity.visible; // consultável exige visível
+  renderEntityNotice(entity);
   form.label.value = entity.label ?? '';
   form.synonyms.value = entity.synonyms.join(', ');
   renderConceptOptions();
   form.concept_id.value = entity.concept_id ?? '';
   form.description.value = entity.description ?? '';
 
-  $('cat-columns').replaceChildren(...entity.columns.flatMap(renderColumnRows));
+  const hiddenColumns = entity.columns.filter((c) => !c.visible).length;
+  setHiddenToggle('cat-toggle-columns', catalog.showHiddenColumns, hiddenColumns);
+  const columns = entity.columns.filter(
+    (c) => c.visible || catalog.showHiddenColumns || catalog.touchedColumns.has(c.id)
+  );
+  const rows = columns.flatMap(renderColumnRows);
+  if (!rows.length) {
+    const empty = el('tr');
+    empty.append(el('td', { colspan: 5, class: 'muted' }, 'Nenhuma coluna visível.'));
+    rows.push(empty);
+  }
+  $('cat-columns').replaceChildren(...rows);
 }
+
+function renderEntityNotice(entity) {
+  if (!entity.visible) {
+    setNotice('cat-entity-notice', 'Entidade oculta: a Maria não a enxerga nem a consulta.', [
+      ['Usar nas respostas', () => useEntity(entity.id)],
+    ]);
+  } else if (!entity.queryable) {
+    setNotice('cat-entity-notice', 'Só contexto: a Maria conhece esta entidade, mas não pode consultá-la.', [
+      ['Permitir consultas', () => patchEntity(entity.id, { queryable: true })],
+    ]);
+  } else {
+    setNotice('cat-entity-notice', '');
+  }
+}
+
+const useEntity = (id) => patchEntity(id, { visible: true, queryable: true });
 
 // Valores da origem: os do enum ou, sem enum, os observados nos dados.
 const sourceValues = (column) => column.enum_values ?? column.observed_values ?? null;
@@ -381,58 +499,29 @@ function renderValuesEditor(column) {
 function renderColumnRows(column) {
   const rows = [renderColumnRow(column)];
   if (catalog.expanded.has(column.id)) {
-    const tr = el('tr', { class: 'values-row' });
-    const td = el('td', { colspan: 7 });
-    td.append(renderValuesEditor(column));
+    const tr = el('tr', { class: 'column-options-row' });
+    const td = el('td', { colspan: 5 });
+    td.append(renderColumnOptions(column));
     tr.append(td);
     rows.push(tr);
   }
   return rows;
 }
 
-function renderColumnRow(column) {
-  const tr = el('tr', column.present ? {} : { class: 'is-missing' });
-  const name = el('td', { class: 'mono' }, column.name);
-  if (column.primary_key) name.append(el('span', { class: 'key', title: 'Chave primária' }, 'PK'));
-  if (!column.present) name.append(' ', badge('ausente', 'warn'));
-  const known = valueRows(column).length;
-  if (known) {
-    const pending = column.undescribed_values.length + column.obsolete_values.length;
-    const toggle = el(
-      'button',
-      { type: 'button', class: 'values-toggle', 'aria-expanded': String(catalog.expanded.has(column.id)) },
-      `valores (${known})`
-    );
-    toggle.addEventListener('click', () => {
-      if (catalog.expanded.has(column.id)) catalog.expanded.delete(column.id);
-      else catalog.expanded.add(column.id);
-      renderEntity();
-    });
-    name.append(toggle);
-    if (pending) name.append(' ', badge(`${pending} a revisar`, 'warn'));
-  }
-  tr.append(name, el('td', { class: 'mono' }, column.data_type ?? '—'));
-
-  const visible = el('td');
-  visible.append(
-    switchInput(column.visible, (checked) => patchColumn(column, { visible: checked }), {
-      label: `Visível: ${column.name}`,
-    })
-  );
+function renderColumnOptions(column) {
+  const options = el('div', { class: 'column-options' });
 
   const access = el('select', { 'aria-label': `Acesso: ${column.name}` });
   access.append(el('option', { value: 'full' }, 'Valores'), el('option', { value: 'aggregate' }, 'Só agregação'));
   access.value = column.access;
   access.addEventListener('change', () => patchColumn(column, { access: access.value }));
-  const accessCell = el('td');
-  accessCell.append(access);
+  const accessField = el('label', { class: 'field inline' });
+  accessField.append(el('span', {}, 'Acesso'), access);
 
-  const searchable = el('td');
-  searchable.append(
-    switchInput(column.searchable, (checked) => patchColumn(column, { searchable: checked }), {
-      label: `Pesquisável: ${column.name}`,
-    })
-  );
+  const searchable = switchInput(column.searchable, (checked) => patchColumn(column, { searchable: checked }), {
+    label: `Pesquisável: ${column.name}`,
+  });
+  searchable.append(el('span', {}, 'Pesquisável'));
 
   // Se os valores conhecidos entram no contexto do modelo.
   const listing = el('select', { 'aria-label': `Valores no contexto: ${column.name}` });
@@ -443,8 +532,64 @@ function renderColumnRow(column) {
   );
   listing.value = column.list_values;
   listing.addEventListener('change', () => patchColumn(column, { list_values: listing.value }));
-  const listingCell = el('td');
-  listingCell.append(listing);
+  const listingField = el('label', { class: 'field inline', title: 'Automático: só categorias curtas entram no prompt' });
+  listingField.append(el('span', {}, 'Valores no contexto'), listing);
+
+  options.append(accessField, searchable, listingField);
+  if (valueRows(column).length) options.append(renderValuesEditor(column));
+  return options;
+}
+
+// O que foge do padrão aparece mesmo com as opções fechadas.
+function columnBadges(column) {
+  const badges = [];
+  if (column.access === 'aggregate') badges.push(badge('só agregação', 'warn'));
+  if (column.searchable) badges.push(badge('pesquisável'));
+  if (column.list_values === 'always') badges.push(badge('sempre lista valores'));
+  if (column.list_values === 'never') badges.push(badge('nunca lista valores'));
+  const pending = column.undescribed_values.length + column.obsolete_values.length;
+  if (pending) badges.push(badge(`${pending} a revisar`, 'warn'));
+  return badges;
+}
+
+function renderColumnRow(column) {
+  const tr = el('tr', column.present ? {} : { class: 'is-missing' });
+  const name = el('td', { class: 'mono' }, column.name);
+  if (column.primary_key) name.append(el('span', { class: 'key', title: 'Chave primária' }, 'PK'));
+  if (!column.present) name.append(' ', badge('ausente', 'warn'));
+  const badges = columnBadges(column);
+  if (badges.length) {
+    const row = el('div', { class: 'column-badges' });
+    row.append(...badges);
+    name.append(row);
+  }
+  tr.append(name, el('td', { class: 'mono' }, column.data_type ?? '—'));
+
+  const visible = el('td');
+  visible.append(
+    switchInput(
+      column.visible,
+      (checked) => {
+        catalog.touchedColumns.add(column.id);
+        patchColumn(column, { visible: checked });
+      },
+      { label: `Visível: ${column.name}` }
+    )
+  );
+
+  const known = valueRows(column).length;
+  const toggle = el(
+    'button',
+    { type: 'button', class: 'ghost', 'aria-expanded': String(catalog.expanded.has(column.id)) },
+    known ? `Opções e valores (${known})` : 'Opções'
+  );
+  toggle.addEventListener('click', () => {
+    if (catalog.expanded.has(column.id)) catalog.expanded.delete(column.id);
+    else catalog.expanded.add(column.id);
+    renderEntity();
+  });
+  const optionsCell = el('td');
+  optionsCell.append(toggle);
 
   const description = el('input', {
     'aria-label': `Descrição: ${column.name}`,
@@ -455,7 +600,7 @@ function renderColumnRow(column) {
   const descriptionCell = el('td');
   descriptionCell.append(description);
 
-  tr.append(visible, accessCell, searchable, listingCell, descriptionCell);
+  tr.append(visible, descriptionCell, optionsCell);
   return tr;
 }
 
@@ -662,6 +807,7 @@ async function deleteConcept(concept) {
 async function loadLinks() {
   const data = await attempt(() => api('catalog/links'));
   if (!data) return;
+  renderCrossSourceNotice(data.links);
   const items = data.links.map((link) => {
     const li = el('li');
     const head = el('div', { class: 'concept-head' });
@@ -681,11 +827,65 @@ async function loadLinks() {
     actions.append(remove);
     head.append(actions);
     li.append(head);
-    if (link.enabled && !link.active) li.append(badge('coluna oculta ou ausente: não vale para consultas', 'warn'));
+    if (link.enabled && !link.active) li.append(renderLinkWarning(link));
     if (link.description) li.append(el('p', { class: 'muted small' }, link.description));
     return li;
   });
   $('cat-links').replaceChildren(...(items.length ? items : [el('li', { class: 'muted' }, 'Nenhuma ligação.')]));
+}
+
+function renderLinkWarning(link) {
+  const warning = el('div', { class: 'link-warning' });
+  warning.append(
+    badge('coluna oculta ou ausente: não vale para consultas', 'warn'),
+    actionButton(`Abrir ${link.from_entity}`, () => openLinkedEntity(link.from_datasource_id, link.from_entity)),
+    actionButton(`Abrir ${link.to_entity}`, () => openLinkedEntity(link.to_datasource_id, link.to_entity))
+  );
+  return warning;
+}
+
+// Mesma condição de chat.py: uma ligação ativa entre duas fontes ativas.
+function renderCrossSourceNotice(links) {
+  const enabled = new Map(catalog.datasources.map((d) => [d.id, d.enabled]));
+  const works = (l) => l.active && enabled.get(l.from_datasource_id) && enabled.get(l.to_datasource_id);
+  const prefix = 'Consultas entre fontes indisponíveis:';
+  if (links.some(works)) return setNotice('cat-cross-notice', '');
+  if (!links.length) {
+    return setNotice('cat-cross-notice', `${prefix} não há ligações entre os bancos.`, [
+      ['Criar ligação', () => { $('cat-link-details').open = true; $('cat-link-form').source.focus(); }],
+    ]);
+  }
+  const inactive = catalog.datasources.filter(
+    (d) => !d.enabled && links.some((l) => [l.from_datasource_id, l.to_datasource_id].includes(d.id))
+  );
+  if (inactive.length) {
+    const names = inactive.map((d) => d.name).join(' e ');
+    return setNotice(
+      'cat-cross-notice',
+      `${prefix} ${names} ${inactive.length > 1 ? 'estão inativas' : 'está inativa'}.`,
+      inactive.map((d) => [`Ativar ${d.name}`, () => activateSource(d.id)])
+    );
+  }
+  setNotice(
+    'cat-cross-notice',
+    links.some((l) => l.enabled)
+      ? `${prefix} as ligações têm coluna oculta ou ausente. Abra as entidades na lista de ligações.`
+      : `${prefix} as ligações estão desligadas. Ligue uma delas na lista de ligações.`
+  );
+}
+
+async function activateSource(id) {
+  await patchDatasource({ enabled: true }, id);
+  await refreshLinks();
+}
+
+async function openLinkedEntity(datasourceId, qualifiedName) {
+  const data = await attempt(() => api(`catalog/datasources/${encodeURIComponent(datasourceId)}/entities`));
+  if (!data) return;
+  const entity = data.entities.find((e) => `${e.schema_name}.${e.name}` === qualifiedName);
+  if (!entity) return catalogError(`A entidade ${qualifiedName} não está no catálogo.`);
+  await selectDatasource(datasourceId);
+  await selectEntity(entity.id, { show: true, revealColumns: true });
 }
 
 async function refreshLinks() {
@@ -740,10 +940,6 @@ function showView(view) {
 async function refreshView() {
   if (catalog.view === 'relationships') await loadRelationships();
   if (catalog.view === 'context') await loadContext();
-  if (catalog.view === 'concepts') {
-    await loadConcepts();
-    await refreshLinks();
-  }
 }
 
 // --- Eventos -----------------------------------------------------------------
@@ -755,16 +951,24 @@ document.querySelectorAll('.subtab').forEach((tab) => {
   });
 });
 
-$('cat-datasource').addEventListener('change', (event) => selectDatasource(event.target.value));
 $('cat-enabled').addEventListener('change', (event) => patchDatasource({ enabled: event.target.checked }));
 $('cat-sync').addEventListener('click', syncDatasource);
 $('cat-check').addEventListener('click', checkDatasource);
 $('cat-auto-sync').addEventListener('change', (event) => patchDatasource({ auto_sync: event.target.checked }));
 $('cat-search').addEventListener('input', renderEntityList);
-$('cat-filter').addEventListener('change', renderEntityList);
+$('cat-toggle-hidden').addEventListener('click', () => {
+  catalog.showHidden = !catalog.showHidden;
+  renderEntityList();
+});
+$('cat-toggle-columns').addEventListener('click', () => {
+  catalog.showHiddenColumns = !catalog.showHiddenColumns;
+  renderEntity();
+});
 
 const entityForm = $('cat-entity-form');
-entityForm.visible.addEventListener('change', () => patchEntity(catalog.entity.id, { visible: entityForm.visible.checked }));
+entityForm.visible.addEventListener('change', () =>
+  entityForm.visible.checked ? useEntity(catalog.entity.id) : patchEntity(catalog.entity.id, { visible: false })
+);
 entityForm.queryable.addEventListener('change', () =>
   patchEntity(catalog.entity.id, { queryable: entityForm.queryable.checked })
 );
@@ -796,11 +1000,7 @@ $('view-source').addEventListener('submit', async (event) => {
     description: nullable(form.description.value),
     instructions: nullable(form.instructions.value),
   });
-  if (saved) {
-    flash('cat-source-saved');
-    const option = $('cat-datasource').querySelector(`option[value="${saved.id}"]`);
-    if (option) option.textContent = saved.name;
-  }
+  if (saved) flash('cat-source-saved');
 });
 
 // Carrega na primeira vez que a aba é aberta.

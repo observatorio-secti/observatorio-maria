@@ -396,7 +396,7 @@ Com `auto_sync` ligado na fonte (API, YAML ou demo), uma defasagem é sincroniza
 
 **Exemplos few-shot.** Cada fonte pode ter exemplos de pergunta e SQL (`examples` no YAML ou na API), que entram no contexto do modelo. Antes disso, cada exemplo passa pelas mesmas regras de `query_data` (entidades, colunas e funções permitidas). Um exemplo que cita uma coluna inexistente ou oculta fica fora do contexto, e a prévia (`GET .../context`) o lista em `rejected_examples`, com o motivo.
 
-**Fluxo para uma nova fonte:** escrever o YAML (ou criar a fonte pela API) → `task seed` → sincronizar → revisar na demo, olhando a aba "O que a Maria enxerga".
+**Fluxo para uma nova fonte:** escrever o YAML (ou criar a fonte pela API) → `task seed` → sincronizar → revisar na aba da fonte na demo, olhando a subaba "O que a Maria enxerga".
 
 | Método | Rota | Descrição |
 |---|---|---|
@@ -529,9 +529,9 @@ Acesse `/demo/` com a API rodando. A página consome os endpoints reais:
 
 - **Chat:** digite e envie logo ao abrir (a conversa é criada automaticamente) ou clique numa sugestão: a tela vazia mostra 4 perguntas sorteadas a cada acesso, entre as 15 de `SUGGESTED_QUESTIONS` em `demo/app.js`. A resposta aparece enquanto é gerada, renderizada em Markdown, com textos, gráficos e tabelas na ordem em que chegam. Durante a geração, o botão Enviar vira Parar: a resposta é descartada, nada é gravado e a pergunta fica no campo. Em erro temporário, o banner oferece "Tentar novamente". A última resposta mostra as perguntas de continuação como botões, e clicar envia a pergunta. Cada resposta tem o botão Copiar (texto em Markdown), e os blocos têm "Baixar PNG" e "Baixar CSV". O CSV sai pronto para o Excel em pt-BR, com fórmulas neutralizadas e título, aviso de corte e origem nas últimas linhas. Também dá para renomear e excluir conversas, e o título é gerado automaticamente.
 - **Contrato de blocos:** uma resposta de exemplo com `text`, `chart` (Chart.js) e `table`, mais um tipo desconhecido ignorado, ao lado do JSON. O eixo Y dos gráficos mostra o rótulo e a unidade de uma série só, ou a unidade comum a todas. Blocos com `truncated` mostram um aviso com as linhas exibidas, e blocos com `origin` mostram um rodapé com fonte, descrição, data e cobertura.
-- **Catálogo de dados:** escolha a fonte, sincronize, ligue e desligue entidades, colunas e relacionamentos, edite descrições e instruções, veja **o que a Maria enxerga** e baixe o YAML. A barra da fonte mostra o estado do schema, com "Verificar agora", o interruptor de sincronização automática e um quadro com as mudanças detectadas. Em cada coluna com valores conhecidos, "valores" abre a edição do significado de cada um, destacando os sem descrição e os obsoletos.
+- **Catálogo de dados:** cada fonte tem a própria aba, com cor e cabeçalho com o estado do schema, as entidades em uso, "Verificar agora" e "Sincronizar schema", além de um quadro com as mudanças detectadas. A lista mostra só as entidades em uso, com "Mostrar ocultas", e a busca alcança também as ocultas. Na entidade, "Usar nas respostas" liga visível e consultável; "Opções avançadas" guarda consultável, sinônimos e conceito. As colunas mostram nome, tipo, visível e descrição, e "Opções" abre acesso, pesquisável, valores no contexto e o significado de cada valor, destacando os sem descrição e os obsoletos. O que foge do padrão aparece como selo. A subaba **Fonte** concentra instruções, conexão, fonte ativa, sincronização automática e "Baixar YAML"; **Relacionamentos** e **O que a Maria enxerga** continuam por fonte. A aba **Entre fontes** reúne conceitos, ligações e a prévia da seção de conceitos. O que está desligado traz um aviso com o botão que resolve: fonte inativa, sincronização automática, entidade oculta ou só contexto, ligação sem efeito e consultas entre fontes indisponíveis.
 
-Para desligar a demo, use `DEMO_ENABLED=false`. Ela carrega Chart.js, marked e DOMPurify de CDN.
+A página usa um tema claro fixo, sem emojis. Para desligar a demo, use `DEMO_ENABLED=false`. Ela carrega Chart.js, marked e DOMPurify de CDN.
 
 ---
 
