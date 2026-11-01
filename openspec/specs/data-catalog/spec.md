@@ -612,7 +612,7 @@ O arquivo de conceitos SHALL aceitar `links`, com as colunas no formato `fonte:s
 - **THEN** ela continua desligada
 
 ### Requirement: Consultas entre fontes no contexto
-Com ao menos uma ligação ativa entre fontes incluídas, o contexto SHALL ter a seção "Consultas entre fontes", com as ligações, o formato `fonte.schema.tabela` e a orientação de informar a cobertura devolvida. Sem ligação ativa, a seção MUST ficar de fora.
+Com ao menos uma ligação ativa entre fontes incluídas, o contexto SHALL ter a seção "Consultas entre fontes", com as ligações, o formato `fonte.schema.tabela`, a orientação de informar a cobertura devolvida e o alcance do limite de linhas. Sem ligação ativa, a seção MUST ficar de fora.
 
 #### Scenario: Ligação ativa
 - **WHEN** fomento e Simcc estão ativos e a ligação pelo Lattes está ligada
@@ -621,3 +621,63 @@ Com ao menos uma ligação ativa entre fontes incluídas, o contexto SHALL ter a
 #### Scenario: Ligação desligada
 - **WHEN** a ligação está desligada
 - **THEN** a seção não aparece
+
+### Requirement: Alcance do limite de linhas no contexto
+A seção "Consultas entre fontes" SHALL dizer que o limite vale para as linhas devolvidas e não para as linhas cruzadas, que perguntas sobre todo um grupo se respondem com agregação e que períodos podem ser comparados entre fontes, em consulta sem CTE para manter a cobertura.
+
+#### Scenario: Orientação presente
+- **WHEN** a seção é gerada com uma ligação ativa
+- **THEN** o texto diz que o limite de linhas não restringe o cruzamento e orienta usar agregação
+
+### Requirement: Política de produção durante a bolsa
+A política de `pesquisadores` no seed SHALL orientar: comparar o ano da produção com os anos de início e término da bolsa, considerar sem limite final a bolsa sem término e contar produções sem repetir coautores, por DOI ou por título e ano.
+
+#### Scenario: Receita na política
+- **WHEN** a seção de conceitos é gerada a partir do seed
+- **THEN** a política de `pesquisadores` traz a comparação por ano, a bolsa sem término e a contagem sem coautores repetidos
+
+### Requirement: Filtro de vigência só quando pedido
+A política de `pesquisadores` no seed SHALL mandar aplicar o filtro de vigência só quando a pergunta pedir esse período. Sem esse pedido, MUST considerar toda a produção dos bolsistas.
+
+#### Scenario: Pergunta sem período
+- **WHEN** a seção de conceitos é gerada a partir do seed
+- **THEN** a política de `pesquisadores` manda não filtrar pela vigência quando a pergunta não pedir o período
+
+### Requirement: Ressalvas da produção durante a bolsa
+A política de `pesquisadores` no seed SHALL mandar dizer na resposta que a comparação é por ano e que a vigência da bolsa não prova que ela financiou a produção.
+
+#### Scenario: Ressalvas na política
+- **WHEN** a seção de conceitos é gerada a partir do seed
+- **THEN** a política de `pesquisadores` manda declarar a comparação por ano e a ressalva sobre financiamento
+
+### Requirement: Pesquisadores por território no Simcc
+As instruções da fonte `simcc` SHALL dizer que o território de identidade é do vínculo em `researcher_institution`, que um pesquisador pode contar em mais de um território e que a contagem usa `COUNT(DISTINCT researcher_id)`. MUST dizer para não somar os territórios como total geral de pesquisadores.
+
+#### Scenario: Orientação no contexto
+- **WHEN** a prévia do contexto da fonte `simcc` é gerada a partir do seed
+- **THEN** ela orienta a contagem distinta por território e proíbe usar a soma dos territórios como total geral
+
+### Requirement: Território não preenchido no Simcc
+As instruções da fonte `simcc` SHALL mandar conferir `identity_territory` com `COUNT(coluna)` quando a consulta vier vazia ou só com nulos, e dizer ao usuário que o dado não está disponível. MUST proibir inferir o território por cidade, instituição ou conhecimento próprio.
+
+#### Scenario: Orientação sobre dado ausente
+- **WHEN** a prévia do contexto da fonte `simcc` é gerada a partir do seed
+- **THEN** ela manda declarar a ausência do dado e proíbe inferir o território
+
+#### Scenario: Coluna toda nula
+- **WHEN** o usuário pede pesquisadores por território e todos os vínculos têm `identity_territory` nulo
+- **THEN** a Maria diz que o dado não está disponível, sem apresentar territórios inventados
+
+### Requirement: Exemplo de pesquisadores por território
+O seed do Simcc SHALL trazer um exemplo de consulta com pesquisadores por território de identidade, com contagem distinta e sem linhas de território nulo. O exemplo MUST passar pelas validações de consulta.
+
+#### Scenario: Exemplo válido
+- **WHEN** a fonte `simcc` é semeada e sincronizada
+- **THEN** a prévia traz o exemplo de pesquisadores por território, sem exemplos recusados
+
+### Requirement: Filtro por nome de território no Simcc
+O seed do Simcc SHALL marcar `researcher_institution.identity_territory` com `list_values: never` e como pesquisável, como as demais colunas de nomes.
+
+#### Scenario: Coluna no seed
+- **WHEN** o seed do Simcc roda num catálogo vazio
+- **THEN** `identity_territory` fica com `list_values` igual a `never` e pesquisável
