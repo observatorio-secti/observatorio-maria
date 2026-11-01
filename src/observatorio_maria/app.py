@@ -38,6 +38,7 @@ app = FastAPI(
     version='0.1.0',
     description='API do Observatório Maria',
     lifespan=lifespan,
+    root_path=Settings().ROOT_PATH,
 )
 
 

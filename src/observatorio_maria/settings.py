@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = 'sqlite+aiosqlite:///./observatorio.db'
     ENVIRONMENT: str = 'development'
     DEMO_ENABLED: bool = True
+    # Prefixo público da API atrás de proxy reverso (ex.: /api-maria).
+    ROOT_PATH: str = ''
     # Intervalo da verificação de defasagem do catálogo; 0 desliga.
     CATALOG_CHECK_INTERVAL_SECONDS: float = 3600
     # Máximo de valores distintos para uma coluna de texto ser categórica.
