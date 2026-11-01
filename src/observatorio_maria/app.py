@@ -84,12 +84,21 @@ def apply_root_path(app: FastAPI, settings: Settings):
         app.add_middleware(RootPathMiddleware, root_path=root_path)
 
 
+class DemoFiles(StaticFiles):
+    """Arquivos da demo, revalidados a cada acesso para refletir o deploy."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers['Cache-Control'] = 'no-cache'
+        return response
+
+
 def mount_demo(app: FastAPI, settings: Settings):
     """Página estática que demonstra a API (conversas, chat e blocos)."""
     if settings.DEMO_ENABLED:
         app.mount(
             '/demo',
-            StaticFiles(directory=Path(__file__).parent / 'demo', html=True),
+            DemoFiles(directory=Path(__file__).parent / 'demo', html=True),
             name='demo',
         )
 

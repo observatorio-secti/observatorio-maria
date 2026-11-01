@@ -73,6 +73,13 @@ async def test_demo_page_is_mounted(client):
     assert '<title>Maria · Demo</title>' in response.text
 
 
+@pytest.mark.parametrize('path', ['/demo/', '/demo/styles.css'])
+async def test_demo_files_are_revalidated(client, path):
+    response = await client.get(path)
+
+    assert response.headers['cache-control'] == 'no-cache'
+
+
 async def test_demo_page_can_be_disabled():
     app = FastAPI()
     mount_demo(app, Settings(_env_file=None, DEMO_ENABLED=False))
