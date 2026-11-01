@@ -170,7 +170,7 @@ main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 
 /* Contrato de blocos */
 .lead { max-width: 760px; }
-.blocks-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.blocks-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .card { padding: 16px; }
 .card h3 { margin: 0 0 12px; font-size: 0.95rem; }
 .card .message { max-width: 100%; }
@@ -181,7 +181,7 @@ pre { margin: 0; overflow: auto; font-size: 0.8rem; background: var(--surface-2)
   .chat-layout { grid-template-columns: 1fr; height: auto; }
   .sidebar { max-height: 220px; }
   .chat { height: 70vh; }
-  .blocks-layout { grid-template-columns: 1fr; }
+  .blocks-layout { grid-template-columns: minmax(0, 1fr); }
   .message { max-width: 100%; }
   .suggestions { grid-template-columns: 1fr; }
   .composer { flex-wrap: wrap; }

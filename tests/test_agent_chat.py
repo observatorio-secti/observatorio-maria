@@ -1261,6 +1261,168 @@ def test_tool_rules_ask_for_explanation_of_visualizations():
     assert 'calls_left chegar a 2' in prompt
 
 
+def test_tool_rules_guide_chart_format():
+    prompt = build_system_prompt(source_contexts=['## Fonte'])
+
+    assert 'orientation horizontal' in prompt
+    assert 'partes não se sobrepõem' in prompt
+    assert 'até 5 partes' in prompt
+
+
+@pytest.mark.asyncio
+async def test_chart_format_reaches_the_block(
+    client, session, conversation, fomento_source
+):
+    chart = await _chart_block(
+        client,
+        session,
+        conversation,
+        fomento_source,
+        {'orientation': 'horizontal'},
+    )
+
+    assert chart['orientation'] == 'horizontal'
+    assert chart['stacking'] is None
+
+
+async def _territory_chart_setup(session, monkeypatch, tmp_path, vinculos):
+    db_file = tmp_path / 'simcc.db'
+    with sqlite3.connect(db_file) as conn:
+        conn.execute(
+            'CREATE TABLE researcher_institution '
+            '(researcher_id TEXT, identity_territory TEXT)'
+        )
+        conn.executemany(
+            'INSERT INTO researcher_institution VALUES (?, ?)', vinculos
+        )
+    monkeypatch.setenv('TEST_SIMCC_URL', f'sqlite+aiosqlite:///{db_file}')
+    session.add(
+        CatalogDataSource(
+            id='simcc',
+            name='Simcc',
+            connection_env='TEST_SIMCC_URL',
+            schemas=['main'],
+            enabled=True,
+        )
+    )
+    await session.flush()
+    entity = CatalogEntity(
+        datasource_id='simcc',
+        schema_name='main',
+        name='researcher_institution',
+        visible=True,
+        queryable=True,
+        present=True,
+    )
+    session.add(entity)
+    await session.flush()
+    session.add_all([
+        CatalogColumn(
+            entity_id=entity.id,
+            name=name,
+            visible=True,
+            present=True,
+            data_type='TEXT',
+        )
+        for name in ('researcher_id', 'identity_territory')
+    ])
+    await session.commit()
+
+
+TERRITORY_SQL = (
+    'SELECT identity_territory, '
+    'COUNT(DISTINCT researcher_id) AS pesquisadores '
+    'FROM researcher_institution WHERE identity_territory IS NOT NULL '
+    'GROUP BY identity_territory ORDER BY pesquisadores DESC'
+)
+
+
+def _territory_query_turn():
+    return AIMessage(
+        content='',
+        tool_calls=[
+            {
+                'name': 'query_data',
+                'args': {'source': 'simcc', 'sql': TERRITORY_SQL},
+                'id': 'q1',
+            }
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_researcher_counts_once_per_territory(
+    client, session, conversation, monkeypatch, tmp_path
+):
+    await _territory_chart_setup(
+        session,
+        monkeypatch,
+        tmp_path,
+        [
+            ('a', 'Litoral Sul'),
+            ('a', 'Litoral Sul'),
+            ('a', 'Portal do Sertão'),
+            ('b', 'Litoral Sul'),
+            ('c', None),
+        ],
+    )
+    set_test_model(
+        ScriptedToolChatModel(
+            responses=[
+                _territory_query_turn(),
+                AIMessage(
+                    content='',
+                    tool_calls=[
+                        {
+                            'name': 'show_chart',
+                            'args': {
+                                'result_id': 'r1',
+                                'chart_type': 'bar',
+                                'title': 'Pesquisadores por território',
+                                'x': 'identity_territory',
+                                'series': ['pesquisadores'],
+                                'orientation': 'horizontal',
+                            },
+                            'id': 'g1',
+                        }
+                    ],
+                ),
+            ]
+        )
+    )
+
+    blocks = await _ask(client, conversation, 'Pesquisadores por território')
+
+    chart = next(b for b in blocks if b['type'] == 'chart')
+    assert chart['orientation'] == 'horizontal'
+    assert chart['data'] == [
+        {'identity_territory': 'Litoral Sul', 'pesquisadores': 2},
+        {'identity_territory': 'Portal do Sertão', 'pesquisadores': 1},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_empty_territory_warns_the_model(
+    client, session, conversation, monkeypatch, tmp_path
+):
+    await _territory_chart_setup(
+        session, monkeypatch, tmp_path, [('a', None), ('b', None)]
+    )
+    model = ScriptedToolChatModel(
+        responses=[
+            _territory_query_turn(),
+            AIMessage('O dado não está disponível na base.'),
+        ]
+    )
+    set_test_model(model)
+
+    blocks = await _ask(client, conversation, 'Pesquisadores por território')
+
+    assert [b['type'] for b in blocks] == ['text']
+    tool_message = model.recorded_calls[1][-1]
+    assert '"hint"' in tool_message.content
+
+
 def _labeled_chart_turn(args):
     return AIMessage(
         content='',

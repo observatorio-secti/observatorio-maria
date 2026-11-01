@@ -195,8 +195,8 @@ As variáveis são lidas do ambiente e do `.env` pelo `Settings` (pydantic-setti
 | `DATABASE_URL` | URL do banco com **driver assíncrono** | `sqlite+aiosqlite:///./observatorio.db` |
 | `ENVIRONMENT` | Nome do ambiente | `development` |
 | `DEMO_ENABLED` | Serve a demo em `/demo/` | `true` |
-| `OPENAI_API_KEY` | Credencial da OpenAI, lida pelo SDK do provedor | — |
 | `ROOT_PATH` | Prefixo público da API atrás de proxy reverso, sem barra final (ex.: `/api-maria`). Faz o `/docs` carregar o `openapi.json` e enviar as requisições pelo prefixo | vazio |
+| `OPENAI_API_KEY` | Credencial da OpenAI, lida pelo SDK do provedor | — |
 | `LLM_FAST_MODEL` / `LLM_MEDIUM_MODEL` / `LLM_ADVANCED_MODEL` | Modelo de cada nível interno, no formato `provedor:modelo` | `openai:gpt-6-luna` |
 | `LLM_*_MODEL_KWARGS` | Parâmetros extras do modelo, em JSON | `{"reasoning_effort": "low"}` |
 | `OTEL_SDK_DISABLED` | Desliga toda a telemetria | `false` |
@@ -277,6 +277,8 @@ Para comparar categorias ao longo de `x`, `show_chart` recebe `group_by` com a c
 
 O pedido é recusado, e o modelo recebe o motivo, em três casos: `x` repetido sem `group_by` (dispersão aceita), par de `x` e grupo repetido e mais de 5 grupos. Nada é somado no servidor, porque médias e percentuais não podem ser somados: o modelo refaz a consulta.
 
+`chart_type` aceita `bar`, `line`, `area`, `pie`, `donut` e `scatter`. Gráficos `bar` também têm `orientation` (`vertical`, o padrão, ou `horizontal`) e `stacking` (nulo, o padrão, `absolute` ou `percent`). O empilhamento exige ao menos duas séries, informadas em `series` ou geradas por `group_by`. Com `percent`, `data` continua com os valores absolutos, e o cliente calcula a proporção, tratando nulo como zero. Negativos são recusados nesse modo. `pie` e `donut` aceitam até 5 registros, e `donut` aceita uma só série. Clientes que ignorem `orientation` e `stacking` desenham barras comuns com os dados corretos, e mensagens gravadas voltam com os valores padrão.
+
 No bloco `table`, uma coluna tem o tipo `string` quando a chave traz o termo `ano` ou `year` (`ano_inicio`, `start_year`) e todos os valores são inteiros de 1900 a 2100. Assim, clientes não formatam `2020` como `2.020`. Os valores continuam numéricos nas linhas, e a regra também vale para blocos já gravados.
 
 `chart` e `table` têm `truncated`, verdadeiro quando o resultado foi cortado por `QUERY_MAX_ROWS`. Mensagens gravadas sem o campo valem como `false`. Um `LIMIT` escrito na própria consulta não marca o campo.
@@ -344,6 +346,8 @@ Há duas fontes:
 | `simcc` | Banco de leitura do Simcc (`SIMCC_DATABASE_URL`) | Currículo Lattes: artigos, livros, capítulos, patentes, softwares, participação em eventos e projetos de pesquisa |
 
 **Simcc.** As tabelas base do Simcc têm uma linha por pesquisador autor e servem para perguntas sobre pesquisadores. As views `mv_canonical_*` têm uma linha por produção, sem repetir coautores, e servem para totais. As instruções da fonte explicam isso ao modelo. Arrays, JSON, `tsvector` e campos internos do ETL do Simcc ficam ocultos. Nome, ORCID e resumo do currículo têm acesso `full`, por decisão do projeto: a Maria pode citar pesquisadores, inclusive ao relacionar com bolsistas do fomento. Para mudar isso, passe as colunas para `aggregate` ou oculte-as pela API ou pela demo. Um pesquisador pode ter várias instituições, ligadas por `researcher_institution`; o antigo `researcher.institution_id` fica fora do contexto, e as instruções orientam `COUNT(DISTINCT ...)` ao contar pesquisadores por instituição.
+
+**Território de identidade no Simcc.** O território é um dado do vínculo, em `researcher_institution.identity_territory`, e um pesquisador pode contar em mais de um. As instruções da fonte orientam `COUNT(DISTINCT researcher_id)`, proíbem somar territórios como total geral e mandam dizer que o dado não está disponível quando a coluna estiver vazia, sem inferir o território por cidade ou instituição.
 
 **Fomento × Simcc.** `pesquisadores.lattes` (fomento) e `researcher.lattes_id` (Simcc) são o mesmo identificador. A ferramenta `query_across_sources` junta as duas fontes numa consulta só, com tabelas no formato `fonte.schema.tabela`, e roda num DuckDB em memória criado para cada consulta. As regras são as de `query_data`, e as fontes só se juntam por **ligações** declaradas no catálogo: cruzar instituições por nome, por exemplo, é recusado. Junto da ligação, a consulta também pode comparar datas e números das duas fontes com `>`, `>=`, `<`, `<=` e `BETWEEN`, o que permite perguntar se um artigo saiu durante uma bolsa; texto, `<>`, `LIKE` e igualdade fora das ligações continuam recusados. `QUERY_MAX_ROWS` limita as linhas devolvidas, não as cruzadas, e o contexto do modelo diz isso. Com a ligação, o resultado traz `coverage`, com quantas chaves a fonte de origem tem e quantas foram encontradas na outra, e o modelo é orientado a informar esses números. Consultas de uma fonte só seguem o caminho de sempre.
 

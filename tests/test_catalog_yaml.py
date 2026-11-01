@@ -268,6 +268,7 @@ def test_fomento_seed_has_no_guessed_modalidade_values():
 
 SIMCC_SEARCHABLE = {
     ('researcher', 'name'),
+    ('researcher_institution', 'identity_territory'),
     ('researcher', 'abstract'),
     ('bibliographic_production', 'title'),
     ('patent', 'title'),

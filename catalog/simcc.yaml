@@ -29,6 +29,8 @@ datasource:
     - Para totais de produções (por ano, Qualis, categoria, tipo de participação etc.), use as views `mv_canonical_*`, que têm uma linha por produção sem repetir coautores. Elas são atualizadas pelo Simcc e podem estar defasadas em relação às tabelas base.
     - `bibliographic_production` guarda artigos, livros, capítulos e trabalhos em eventos; o tipo está em `type`, e os detalhes ficam em `bibliographic_production_article`, `bibliographic_production_book` e `bibliographic_production_book_chapter`, ligadas por `bibliographic_production_id`. O ano está em `year_` (número).
     - Um pesquisador pode ter várias instituições, ligadas por `researcher_institution` (`researcher_id`, `institution_id`). Para pesquisadores por instituição, junte `researcher`, `researcher_institution` e `institution` e conte com `COUNT(DISTINCT r.id)`; somar instituições pode contar o mesmo pesquisador mais de uma vez. Não há correspondência entre `institution` e as instituições do fomento.
+    - O território de identidade é do vínculo: fica em `researcher_institution.identity_territory`, e um pesquisador com vínculos em territórios diferentes conta em cada um deles. Conte pesquisadores por território com `COUNT(DISTINCT researcher_id)` e não some os territórios como total geral de pesquisadores. Para somar produção por território, parta dos pares distintos de `researcher_id` e `identity_territory` numa CTE e diga que coautores do mesmo território repetem a produção.
+    - `identity_territory` pode não estar preenchida. Se uma consulta por ela vier vazia ou só com nulos, confira com `COUNT(identity_territory)` e diga ao usuário que o dado não está disponível na base. Nunca infira o território por cidade, instituição ou conhecimento próprio.
     - `researcher_production` tem as contagens de produção de cada pesquisador, prontas para rankings.
     - Ligação com o fomento: `researcher.lattes_id` é o mesmo identificador de `pesquisadores.lattes` na fonte `fomento`. Para relacionar as duas fontes, use a consulta entre fontes, e não listas de Lattes copiadas de outra consulta.
   examples:
@@ -47,6 +49,9 @@ datasource:
     - question: "Quais pesquisadores têm mais artigos?"
       sql: >-
         SELECT r.name, rp.articles FROM public.researcher_production rp JOIN public.researcher r ON r.id = rp.researcher_id ORDER BY rp.articles DESC LIMIT 10
+    - question: "Quantos pesquisadores há por território de identidade?"
+      sql: >-
+        SELECT identity_territory, COUNT(DISTINCT researcher_id) AS pesquisadores FROM public.researcher_institution WHERE identity_territory IS NOT NULL GROUP BY identity_territory ORDER BY pesquisadores DESC
 
 
 entities:
@@ -102,6 +107,8 @@ entities:
         label: Carga horária
         description: Carga horária semanal do pesquisador na instituição, em horas.
       - name: identity_territory
+        list_values: never
+        searchable: true
         label: Território de identidade
         description: Território de identidade da Bahia do vínculo.
 

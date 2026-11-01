@@ -123,7 +123,7 @@ class ChartGroup(BaseModel):
 
 class ChartBlock(BaseModel):
     type: Literal['chart'] = 'chart'
-    chart_type: Literal['bar', 'line', 'area', 'pie', 'scatter']
+    chart_type: Literal['bar', 'line', 'area', 'pie', 'donut', 'scatter']
     title: str
     x: ChartAxis
     series: list[ChartSeries]
@@ -133,6 +133,17 @@ class ChartBlock(BaseModel):
     group: ChartGroup | None = Field(
         default=None,
         description='Coluna de categoria, quando há uma série por valor dela.',
+    )
+    orientation: Literal['vertical', 'horizontal'] = Field(
+        default='vertical',
+        description='Direção das barras; só `bar` pode ser horizontal.',
+    )
+    stacking: Literal['absolute', 'percent'] | None = Field(
+        default=None,
+        description=(
+            'Empilhamento das barras. Em `percent`, `data` guarda os valores '
+            'absolutos e a proporção é calculada por quem renderiza.'
+        ),
     )
     truncated: bool = Field(
         default=False,

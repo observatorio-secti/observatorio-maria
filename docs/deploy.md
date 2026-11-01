@@ -160,6 +160,8 @@ O seed não sobrescreve o que já está no catálogo. Quando um YAML de fonte mu
   - no `simcc`, `researcher_institution` visível e consultável, com as colunas `researcher_id`, `institution_id`, `workload` e `identity_territory` visíveis (`PATCH /catalog/entities/{id}` e `PATCH /catalog/columns/{id}`);
   - `researcher.institution_id` oculta (`PATCH /catalog/columns/{id}` com `{"visible": false}`).
 
+  - no `simcc`, as instruções e os exemplos de território de identidade (`PATCH /catalog/datasources/simcc`, copiando de `catalog/simcc.yaml`) e `researcher_institution.identity_territory` com `list_values: never` e pesquisável (`PATCH /catalog/columns/{id}`).
+
   Confira o resultado em `GET /catalog/concepts/context` e `GET /catalog/datasources/simcc/context`.
 
 Consultas entre fontes dependem da ligação pelo Lattes, criada pelo mesmo `catalog/concepts.yaml`. A ligação só vale com as duas colunas visíveis, e a imagem precisa ser reconstruída com `--build` para levar a extensão do DuckDB. Sem ligação ativa, a Maria simplesmente não recebe a ferramenta. As conexões do DuckDB usam os mesmos `FOMENTO_DATABASE_URL` e `SIMCC_DATABASE_URL`, com tempo limite no próprio Postgres.

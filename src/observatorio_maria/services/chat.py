@@ -743,6 +743,8 @@ class ChatService:
                 labels=tc_args.get('labels'),
                 units=tc_args.get('units'),
                 group_by=tc_args.get('group_by'),
+                orientation=tc_args.get('orientation'),
+                stacking=tc_args.get('stacking'),
             )
             return (
                 ToolMessage(content=json.dumps(res), tool_call_id=tc_id),

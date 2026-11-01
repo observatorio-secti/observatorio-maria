@@ -214,3 +214,190 @@ def test_old_chart_block_has_no_group():
     )
 
     assert block.group is None
+
+
+TERRITORY_COLUMNS = ['territorio', 'tipo', 'total']
+TERRITORY_TYPES = {'territorio': 'string', 'tipo': 'string', 'total': 'number'}
+
+
+def _format_chart(rows, **overrides):
+    runner = _runner(rows, TERRITORY_COLUMNS, TERRITORY_TYPES)
+    args = {
+        'result_id': 'r1',
+        'chart_type': 'bar',
+        'title': 'Territórios',
+        'x': 'territorio',
+        'series': ['total'],
+    }
+    res = runner.show_chart(**{**args, **overrides})
+    return res, runner.pending_blocks
+
+
+def _territories(count):
+    return [[f'T{n}', 'A', n] for n in range(count)]
+
+
+def test_horizontal_bar_keeps_every_category():
+    res, [block] = _format_chart(_territories(27), orientation='horizontal')
+
+    assert res['status'] == 'ok'
+    assert block['orientation'] == 'horizontal'
+    assert block['stacking'] is None
+    assert len(block['data']) == 27  # noqa: PLR2004
+    ChartBlock.model_validate(block)
+
+
+def test_chart_defaults_to_vertical_without_stacking():
+    _, [block] = _format_chart(_territories(2))
+
+    assert block['orientation'] == 'vertical'
+    assert block['stacking'] is None
+
+
+def test_stacked_bars_use_series_from_group_by():
+    res, [block] = _format_chart(
+        [['T1', 'Artigo', 3], ['T1', 'Livro', 1], ['T2', 'Artigo', 2]],
+        group_by='tipo',
+        stacking='absolute',
+    )
+
+    assert res['status'] == 'ok'
+    assert block['stacking'] == 'absolute'
+    assert [s['label'] for s in block['series']] == ['Artigo', 'Livro']
+    ChartBlock.model_validate(block)
+
+
+def test_percent_stacking_keeps_absolute_values():
+    _, [block] = _format_chart(
+        [['T1', 'Artigo', 30], ['T1', 'Livro', 10]],
+        group_by='tipo',
+        stacking='percent',
+    )
+
+    assert block['data'] == [{'territorio': 'T1', 'artigo': 30, 'livro': 10}]
+
+
+def test_stacking_accepts_missing_combination():
+    res, _ = _format_chart(
+        [['T1', 'Artigo', 3], ['T2', 'Livro', 1]],
+        group_by='tipo',
+        stacking='percent',
+    )
+
+    assert res['status'] == 'ok'
+
+
+def test_donut_is_created():
+    res, [block] = _format_chart(_territories(4), chart_type='donut')
+
+    assert res['status'] == 'ok'
+    assert block['chart_type'] == 'donut'
+    assert len(block['data']) == 4  # noqa: PLR2004
+    ChartBlock.model_validate(block)
+
+
+@pytest.mark.parametrize('chart_type', ['pie', 'donut'])
+def test_five_slices_are_accepted(chart_type):
+    res, _ = _format_chart(_territories(5), chart_type=chart_type)
+
+    assert res['status'] == 'ok'
+
+
+@pytest.mark.parametrize('chart_type', ['pie', 'donut'])
+def test_more_than_five_slices_is_refused(chart_type):
+    res, blocks = _format_chart(_territories(6), chart_type=chart_type)
+
+    assert 'barras' in res['error']
+    assert blocks == []
+
+
+@pytest.mark.parametrize(
+    'overrides',
+    [
+        {'chart_type': 'radar'},
+        {'orientation': 'diagonal'},
+        {'chart_type': 'line', 'orientation': 'horizontal'},
+        {'chart_type': 'donut', 'orientation': 'horizontal'},
+        {'stacking': 'absolute'},
+        {'stacking': 'percent'},
+        {'stacking': 'parcial', 'group_by': 'tipo'},
+        {'chart_type': 'line', 'stacking': 'absolute', 'group_by': 'tipo'},
+        {'chart_type': 'donut', 'stacking': 'percent'},
+        {'chart_type': 'donut', 'group_by': 'tipo'},
+    ],
+)
+def test_invalid_chart_format_is_refused(overrides):
+    rows = [['T1', 'Artigo', 3]]
+    if 'group_by' in overrides:
+        rows.append(['T1', 'Livro', 1])
+    res, blocks = _format_chart(rows, **overrides)
+
+    assert 'error' in res
+    assert blocks == []
+
+
+def test_donut_with_two_series_is_refused():
+    res, blocks = _format_chart(
+        [['T1', 'A', 1]], chart_type='donut', series=['total', 'tipo']
+    )
+
+    assert 'error' in res
+    assert blocks == []
+
+
+def test_percent_stacking_refuses_negative_values():
+    res, blocks = _format_chart(
+        [['T1', 'Artigo', 3], ['T1', 'Livro', -1]],
+        group_by='tipo',
+        stacking='percent',
+    )
+
+    assert 'negativos' in res['error']
+    assert blocks == []
+
+
+def test_absolute_stacking_accepts_negative_values():
+    res, _ = _format_chart(
+        [['T1', 'Artigo', 3], ['T1', 'Livro', -1]],
+        group_by='tipo',
+        stacking='absolute',
+    )
+
+    assert res['status'] == 'ok'
+
+
+def test_grouped_chart_can_be_shown_again_as_percent():
+    _, [block] = _format_chart(
+        [['T1', 'Artigo', 3], ['T1', 'Livro', 1]], group_by='tipo'
+    )
+    store = ResultStore()
+    store.restore(result_from_block(block, 'h1'))
+    runner = QueryRunner(None, store)
+
+    res = runner.show_chart(
+        'h1',
+        'bar',
+        'Composição',
+        'territorio',
+        ['artigo', 'livro'],
+        stacking='percent',
+    )
+
+    assert res['status'] == 'ok'
+    [shown] = runner.pending_blocks
+    assert shown['stacking'] == 'percent'
+    assert shown['data'] == block['data']
+    assert shown['origin'] == block['origin']
+
+
+def test_old_chart_block_has_format_defaults():
+    block = ChartBlock(
+        chart_type='bar',
+        title='Bolsas',
+        x={'key': 'ano', 'label': 'Ano', 'type': 'category'},
+        series=[{'key': 'total', 'label': 'Total'}],
+        data=[{'ano': 2024, 'total': 3}],
+    )
+
+    assert block.orientation == 'vertical'
+    assert block.stacking is None

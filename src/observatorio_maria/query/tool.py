@@ -4,6 +4,7 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from numbers import Number
 from typing import Any
 from unicodedata import normalize
 
@@ -68,7 +69,10 @@ class QueryObservation:
 QueryObserver = Callable[[QueryObservation], None]
 
 MAX_CHART_GROUPS = 5
+MAX_CHART_SLICES = 5
+CHART_TYPES = {'bar', 'line', 'area', 'pie', 'donut', 'scatter'}
 GROUPABLE_CHART_TYPES = {'bar', 'line', 'area'}
+SLICE_CHART_TYPES = {'pie', 'donut'}
 SERIES_KEY_MAX_LENGTH = 40
 NO_GROUP_LABEL = 'Não informado'
 
@@ -257,12 +261,66 @@ def group_chart_rows(
     return labels, data
 
 
+def check_stacking(
+    chart_type: str,
+    series: list[str],
+    data: list[dict[str, Any]],
+    stacking: str,
+) -> None:
+    """Recusa empilhamentos que não formam partes de uma barra."""
+    if stacking not in {'absolute', 'percent'}:
+        raise ValueError(f"Empilhamento '{stacking}' não existe.")
+    if chart_type != 'bar':
+        raise ValueError('stacking só se aplica a gráficos bar.')
+    if len(series) < 2:  # noqa: PLR2004
+        raise ValueError('stacking exige ao menos duas séries.')
+    if stacking == 'percent' and any(
+        isinstance(row[key], Number) and row[key] < 0
+        for row in data
+        for key in series
+    ):
+        raise ValueError(
+            'stacking percent não aceita valores negativos: use barras '
+            'sem empilhamento.'
+        )
+
+
+def check_chart_format(
+    chart_type: str,
+    series: list[str],
+    data: list[dict[str, Any]],
+    orientation: str,
+    stacking: str | None,
+) -> None:
+    """Recusa combinações de tipo, orientação e empilhamento inválidas."""
+    if chart_type not in CHART_TYPES:
+        raise ValueError(f"Tipo de gráfico '{chart_type}' não existe.")
+    if orientation not in {'vertical', 'horizontal'}:
+        raise ValueError(f"Orientação '{orientation}' não existe.")
+    if orientation == 'horizontal' and chart_type != 'bar':
+        raise ValueError('A orientação horizontal só se aplica a bar.')
+    if stacking:
+        check_stacking(chart_type, series, data, stacking)
+    if chart_type == 'donut' and len(series) != 1:
+        raise ValueError('Um gráfico donut aceita uma só série.')
+    if chart_type in SLICE_CHART_TYPES and len(data) > MAX_CHART_SLICES:
+        raise ValueError(
+            f"Um gráfico '{chart_type}' aceita até {MAX_CHART_SLICES} fatias, "
+            f'e o resultado tem {len(data)}. Use barras ou refaça a consulta '
+            'mantendo as maiores e, se a medida puder ser somada, reúna as '
+            'demais em "Outros".'
+        )
+
+
 class ShowChartInput(BaseModel):
     result_id: str = Field(
         description='Identificador do resultado da consulta (ex.: "r1").'
     )
     chart_type: str = Field(
-        description='Tipo: "bar", "line", "area", "pie" ou "scatter".'
+        description=(
+            'Tipo: "bar", "line", "area", "pie", "donut" ou "scatter". '
+            f'"pie" e "donut" aceitam até {MAX_CHART_SLICES} fatias.'
+        )
     )
     title: str = Field(description='Título do gráfico.')
     x: str = Field(description='Nome da coluna para o eixo X.')
@@ -275,7 +333,23 @@ class ShowChartInput(BaseModel):
             'Coluna de categoria que separa as séries, quando o resultado '
             'tem várias linhas por valor de x (ex.: "modalidade" em ano, '
             'modalidade, total). Exige uma só coluna em series. Até '
-            f'{MAX_CHART_GROUPS} valores; não vale para pie e scatter.'
+            f'{MAX_CHART_GROUPS} valores; não vale para pie, donut e scatter.'
+        ),
+    )
+    orientation: str = Field(
+        default='vertical',
+        description=(
+            '"horizontal" põe as categorias no eixo vertical, para rankings '
+            'com muitas categorias ou rótulos longos. Só vale para bar.'
+        ),
+    )
+    stacking: str | None = Field(
+        default=None,
+        description=(
+            '"absolute" empilha as séries, e "percent" mostra cada barra '
+            'como 100%. Só vale para bar com ao menos duas séries, informadas '
+            'em series ou geradas por group_by, e quando as partes não se '
+            'sobrepõem.'
         ),
     )
     labels: dict[str, str] | None = Field(
@@ -624,6 +698,8 @@ class QueryRunner:
         labels: dict[str, str] | None = None,
         units: dict[str, str] | None = None,
         group_by: str | None = None,
+        orientation: str | None = None,
+        stacking: str | None = None,
     ) -> dict[str, Any]:
         """Registra pedido de gráfico a ser montado pelo servidor."""
         result = self.result_store.get(result_id)
@@ -665,6 +741,14 @@ class QueryRunner:
                     }
                     for s in series
                 ]
+            orientation = orientation or 'vertical'
+            check_chart_format(
+                chart_type,
+                [item['key'] for item in chart_series],
+                data,
+                orientation,
+                stacking,
+            )
         except ValueError as exc:
             return {'error': str(exc)}
 
@@ -680,6 +764,8 @@ class QueryRunner:
             'series': chart_series,
             'data': data,
             'group': group,
+            'orientation': orientation,
+            'stacking': stacking or None,
             'truncated': result.truncated,
             'origin': result.origin,
         }
@@ -766,7 +852,9 @@ class QueryRunner:
                 description=(
                     'Gera um gráfico a partir de um resultado prévio. '
                     'O servidor preenche os dados automaticamente. Para '
-                    'comparar categorias ao longo de x, use group_by.'
+                    'comparar categorias ao longo de x, use group_by; para '
+                    'barras deitadas ou empilhadas, use orientation e '
+                    'stacking.'
                 ),
                 args_schema=ShowChartInput,
             ),

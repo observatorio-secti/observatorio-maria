@@ -82,35 +82,98 @@ function chartYTitle(series) {
   return unit && series.every((serie) => serie.unit === unit) ? unit : '';
 }
 
+const CHART_JS_TYPES = { area: 'line', donut: 'doughnut' };
+const CATEGORY_HEIGHT = 28;
+const HORIZONTAL_CHROME = 90;
+const AXIS_LABEL_LENGTH = 16;
+
+// Barras horizontais crescem com as categorias, para nenhum rótulo sumir.
+function chartHeight(block, minimum) {
+  if (block.orientation !== 'horizontal') return minimum;
+  return Math.max(minimum, block.data.length * CATEGORY_HEIGHT + HORIZONTAL_CHROME);
+}
+
+// Rótulo longo em até duas linhas, para o eixo não cortar o texto em telas estreitas.
+function wrapAxisLabel(label) {
+  const text = String(label);
+  if (text.length <= AXIS_LABEL_LENGTH) return text;
+  const words = text.split(' ');
+  let first = '';
+  while (words.length > 1 && `${first} ${words[0]}`.trim().length <= AXIS_LABEL_LENGTH) {
+    first = `${first} ${words.shift()}`.trim();
+  }
+  const rest = words.join(' ');
+  const second = rest.length > AXIS_LABEL_LENGTH ? `${rest.slice(0, AXIS_LABEL_LENGTH - 1)}…` : rest;
+  return first ? [first, second] : second;
+}
+
+// Parte de cada série no total da linha; valor nulo conta como zero.
+function percentShare(block, row, key) {
+  const total = block.series.reduce((sum, serie) => sum + (row[serie.key] ?? 0), 0);
+  return total ? ((row[key] ?? 0) / total) * 100 : 0;
+}
+
+function percentTooltip(block, context) {
+  const { key, label } = block.series[context.datasetIndex];
+  const absolute = block.data[context.dataIndex][key];
+  const share = context.raw.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+  return `${label}: ${share}% (${absolute?.toLocaleString('pt-BR') ?? 'sem dado'})`;
+}
+
 function chartConfig(block, { text, grid }) {
-  const yTitle = chartYTitle(block.series);
+  const percent = block.stacking === 'percent';
+  const stacked = Boolean(block.stacking);
+  const horizontal = block.orientation === 'horizontal';
+  const valueTitle = percent ? 'Participação (%)' : chartYTitle(block.series);
   const colors = PALETTE();
   const labels = block.data.map((row) => row[block.x.key]);
-  const isPie = block.chart_type === 'pie';
+  const isPie = block.chart_type === 'pie' || block.chart_type === 'donut';
+  const seriesValues = (serie) => {
+    if (block.chart_type === 'scatter') return block.data.map((row) => ({ x: row[block.x.key], y: row[serie.key] }));
+    if (percent) return block.data.map((row) => percentShare(block, row, serie.key));
+    return block.data.map((row) => row[serie.key]);
+  };
   const datasets = block.series.map((serie, i) => ({
     label: serie.unit ? `${serie.label} (${serie.unit})` : serie.label,
-    data:
-      block.chart_type === 'scatter'
-        ? block.data.map((row) => ({ x: row[block.x.key], y: row[serie.key] }))
-        : block.data.map((row) => row[serie.key]),
+    data: seriesValues(serie),
     backgroundColor: isPie ? labels.map((_, j) => colors[j % colors.length]) : colors[i % colors.length],
     borderColor: colors[i % colors.length],
     fill: block.chart_type === 'area',
     tension: 0.25,
   }));
+  const categoryAxis = {
+    stacked,
+    title: { display: true, text: block.x.label, color: text },
+    ticks: {
+      color: text,
+      autoSkip: !horizontal,
+      ...(horizontal ? { callback: (_, index) => wrapAxisLabel(labels[index]) } : {}),
+    },
+    grid: { color: grid },
+  };
+  const valueAxis = {
+    stacked,
+    ...(percent ? { min: 0, max: 100 } : {}),
+    title: { display: Boolean(valueTitle), text: valueTitle, color: text },
+    ticks: { color: text, ...(percent ? { callback: (value) => `${value}%` } : {}) },
+    grid: { color: grid },
+  };
   return {
-    type: block.chart_type === 'area' ? 'line' : block.chart_type,
+    type: CHART_JS_TYPES[block.chart_type] ?? block.chart_type,
     data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: text } } },
+      indexAxis: horizontal ? 'y' : 'x',
+      plugins: {
+        legend: { labels: { color: text } },
+        ...(percent ? { tooltip: { callbacks: { label: (context) => percentTooltip(block, context) } } } : {}),
+      },
       scales: isPie
         ? {}
-        : {
-            x: { title: { display: true, text: block.x.label, color: text }, ticks: { color: text }, grid: { color: grid } },
-            y: { title: { display: Boolean(yTitle), text: yTitle, color: text }, ticks: { color: text }, grid: { color: grid } },
-          },
+        : horizontal
+          ? { x: valueAxis, y: categoryAxis }
+          : { x: categoryAxis, y: valueAxis },
     },
   };
 }
@@ -193,7 +256,7 @@ function wrapText(context, text, width) {
 // Redesenha com o tema claro: o canvas da tela é transparente e usa as cores do tema.
 function chartPng(block) {
   const width = 960;
-  const height = 480;
+  const height = chartHeight(block, 480);
   const margin = 24;
   const canvas = el('canvas', { width, height });
   const config = chartConfig(block, { text: '#344054', grid: '#e4e7ec' });
@@ -205,7 +268,7 @@ function chartPng(block) {
   context.font = 'bold 20px sans-serif';
   const title = wrapText(context, block.title, width);
   context.font = '14px sans-serif';
-  const notes = [block.truncated ? truncationText(block.data.length) : '', block.origin ? originText(block.origin) : '']
+  const notes = [block.truncated ? truncationText(block, block.data.length) : '', block.origin ? originText(block.origin) : '']
     .filter(Boolean)
     .flatMap((note) => wrapText(context, note, width));
   const top = margin + title.length * 26 + 8;
@@ -258,6 +321,7 @@ const blockRenderers = {
     const node = el('div', { class: 'block block-chart' });
     node.append(el('h4', {}, block.title));
     const wrap = el('div', { class: 'canvas-wrap' });
+    wrap.style.minHeight = `${chartHeight(block, 0)}px`;
     const canvas = el('canvas', { role: 'img', 'aria-label': block.title });
     wrap.append(canvas);
     node.append(wrap);
@@ -675,6 +739,25 @@ const SAMPLE_CONTENT = [
       { territorio: 'Portal do Sertão', bolsas: 118, participacao: 14.3 },
       { territorio: 'Litoral Sul', bolsas: 97, participacao: 11.7 },
       { territorio: 'Outros', bolsas: 104, participacao: 12.1 },
+    ],
+  },
+  {
+    type: 'chart',
+    chart_type: 'bar',
+    orientation: 'horizontal',
+    stacking: 'absolute',
+    title: 'Produção por território e tipo (exemplo)',
+    x: { key: 'territorio', label: 'Território', type: 'category' },
+    series: [
+      { key: 'artigos', label: 'Artigos', unit: null },
+      { key: 'livros', label: 'Livros', unit: null },
+    ],
+    group: { key: 'tipo', label: 'Tipo' },
+    data: [
+      { territorio: 'Metropolitano de Salvador', artigos: 840, livros: 96 },
+      { territorio: 'Portal do Sertão', artigos: 212, livros: 31 },
+      { territorio: 'Litoral Sul', artigos: 187, livros: 22 },
+      { territorio: 'Sudoeste Baiano', artigos: 143, livros: 18 },
     ],
   },
   { type: 'map', region: 'BA', note: 'Tipo futuro: clientes atuais ignoram com segurança.' },
