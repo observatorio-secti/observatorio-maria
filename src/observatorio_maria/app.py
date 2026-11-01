@@ -20,6 +20,28 @@ from observatorio_maria.settings import Settings
 Settings().export_environment()
 
 
+class RootPathMiddleware:
+    """Serve a API sob um prefixo público, removido ou não pelo proxy.
+
+    O Starlette espera `path` com o prefixo de `root_path`: sem isso, as rotas
+    respondem, mas arquivos estáticos e redirecionamentos se perdem.
+    """
+
+    def __init__(self, app, root_path: str):
+        self.app = app
+        self.root_path = root_path
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] in {'http', 'websocket'}:
+            path = scope['path']
+            if path != self.root_path and not path.startswith(
+                f'{self.root_path}/'
+            ):
+                path = f'{self.root_path}{path}'
+            scope = {**scope, 'path': path, 'root_path': self.root_path}
+        await self.app(scope, receive, send)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Verificação periódica de defasagem do catálogo (somente leitura).
@@ -38,7 +60,6 @@ app = FastAPI(
     version='0.1.0',
     description='API do Observatório Maria',
     lifespan=lifespan,
-    root_path=Settings().ROOT_PATH,
 )
 
 
@@ -57,6 +78,12 @@ app.include_router(conversations.router)
 app.include_router(catalog.router)
 
 
+def apply_root_path(app: FastAPI, settings: Settings):
+    root_path = settings.ROOT_PATH.rstrip('/')
+    if root_path:
+        app.add_middleware(RootPathMiddleware, root_path=root_path)
+
+
 def mount_demo(app: FastAPI, settings: Settings):
     """Página estática que demonstra a API (conversas, chat e blocos)."""
     if settings.DEMO_ENABLED:
@@ -67,6 +94,7 @@ def mount_demo(app: FastAPI, settings: Settings):
         )
 
 
+apply_root_path(app, Settings())
 mount_demo(app, Settings())
 setup_telemetry(app, engine)
 

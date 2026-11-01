@@ -195,7 +195,7 @@ As variáveis são lidas do ambiente e do `.env` pelo `Settings` (pydantic-setti
 | `DATABASE_URL` | URL do banco com **driver assíncrono** | `sqlite+aiosqlite:///./observatorio.db` |
 | `ENVIRONMENT` | Nome do ambiente | `development` |
 | `DEMO_ENABLED` | Serve a demo em `/demo/` | `true` |
-| `ROOT_PATH` | Prefixo público da API atrás de proxy reverso, sem barra final (ex.: `/api-maria`). Faz o `/docs` carregar o `openapi.json` e enviar as requisições pelo prefixo | vazio |
+| `ROOT_PATH` | Prefixo público da API atrás de proxy reverso, sem barra final (ex.: `/api-maria`). Faz o `/docs` e a demo funcionarem pelo prefixo, com o proxy removendo-o ou não | vazio |
 | `OPENAI_API_KEY` | Credencial da OpenAI, lida pelo SDK do provedor | — |
 | `LLM_FAST_MODEL` / `LLM_MEDIUM_MODEL` / `LLM_ADVANCED_MODEL` | Modelo de cada nível interno, no formato `provedor:modelo` | `openai:gpt-6-luna` |
 | `LLM_*_MODEL_KWARGS` | Parâmetros extras do modelo, em JSON | `{"reasoning_effort": "low"}` |

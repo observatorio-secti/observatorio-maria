@@ -170,7 +170,7 @@ Consultas entre fontes dependem da ligação pelo Lattes, criada pelo mesmo `cat
 
 Libere a porta `11309` no firewall, ou aponte o proxy reverso para ela.
 
-Quando o proxy publica a API em um subcaminho, como `https://observatoriocti.secti.ba.gov.br/api-maria/`, defina `ROOT_PATH=/api-maria` no `.env` e recrie o container com `up -d`. Sem isso, o Swagger procura `/openapi.json` na raiz do domínio e não carrega. A API responde com ou sem o prefixo, então o proxy pode removê-lo ou repassá-lo. Com `ROOT_PATH` definido, abra o Swagger pelo endereço público: em `http://localhost:11309/docs` ele busca o `openapi.json` no prefixo e não carrega.
+Quando o proxy publica a API em um subcaminho, como `https://observatoriocti.secti.ba.gov.br/api-maria/`, defina `ROOT_PATH=/api-maria` no `.env` e recrie o container com `up -d`. Sem isso, o Swagger procura `/openapi.json` na raiz do domínio e não carrega. A API, o Swagger e a demo respondem com ou sem o prefixo, então o proxy pode removê-lo ou repassá-lo. A demo fica em `https://observatoriocti.secti.ba.gov.br/api-maria/demo/`, e o proxy precisa encaminhar todo o caminho sob `/api-maria/`, não só as rotas da API. Com `ROOT_PATH` definido, abra o Swagger pelo endereço público: em `http://localhost:11309/docs` ele busca o `openapi.json` no prefixo e não carrega.
 
 ## Operação
 

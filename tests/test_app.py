@@ -1,9 +1,10 @@
 from http import HTTPStatus
 
+import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from observatorio_maria.app import app, mount_demo
+from observatorio_maria.app import apply_root_path, mount_demo
 from observatorio_maria.settings import Settings
 
 
@@ -21,14 +22,23 @@ async def test_openapi_exposes_content_block_schemas(client):
     assert {'TextBlock', 'ChartBlock', 'TableBlock'} <= schemas.keys()
 
 
-async def test_swagger_uses_public_prefix_behind_proxy(monkeypatch):
-    monkeypatch.setenv('ROOT_PATH', '/api-maria')
-    monkeypatch.setattr(app, 'root_path', Settings().ROOT_PATH)
-    monkeypatch.setattr(app, 'openapi_schema', None)
-    monkeypatch.setattr(app, 'servers', [])
-    transport = ASGITransport(app=app)
+def _app_behind_proxy():
+    app = FastAPI()
+    settings = Settings(_env_file=None, ROOT_PATH='/api-maria/')
+    apply_root_path(app, settings)
+    mount_demo(app, settings)
 
-    async with AsyncClient(transport=transport, base_url='http://test') as ac:
+    @app.get('/health')
+    async def health():
+        return {'status': 'ok'}
+
+    return AsyncClient(
+        transport=ASGITransport(app=app), base_url='http://test'
+    )
+
+
+async def test_swagger_uses_public_prefix_behind_proxy():
+    async with _app_behind_proxy() as ac:
         swagger = await ac.get('/docs')
         direct = await ac.get('/openapi.json')
         prefixed = await ac.get('/api-maria/openapi.json')
@@ -36,6 +46,24 @@ async def test_swagger_uses_public_prefix_behind_proxy(monkeypatch):
     assert "url: '/api-maria/openapi.json'" in swagger.text
     assert direct.json()['servers'] == [{'url': '/api-maria'}]
     assert prefixed.status_code == HTTPStatus.OK
+
+
+@pytest.mark.parametrize('prefix', ['', '/api-maria'])
+@pytest.mark.parametrize('path', ['/health', '/demo/', '/demo/app.js'])
+async def test_app_answers_whether_proxy_strips_prefix_or_not(prefix, path):
+    async with _app_behind_proxy() as ac:
+        response = await ac.get(f'{prefix}{path}')
+
+    assert response.status_code == HTTPStatus.OK
+
+
+@pytest.mark.parametrize('prefix', ['', '/api-maria'])
+async def test_demo_redirect_keeps_public_prefix(prefix):
+    async with _app_behind_proxy() as ac:
+        response = await ac.get(f'{prefix}/demo')
+
+    assert response.status_code == HTTPStatus.TEMPORARY_REDIRECT
+    assert response.headers['location'] == 'http://test/api-maria/demo/'
 
 
 async def test_demo_page_is_mounted(client):
