@@ -115,12 +115,14 @@ function chartConfig(block, { text, grid }) {
   };
 }
 
-function truncationText(count) {
+function truncationText(block, count) {
+  // Num gráfico agrupado, os registros não são as linhas do resultado.
+  if (block.group) return 'Mostrando só parte dos dados: o resultado foi cortado pelo limite da consulta.';
   return `Mostrando só as primeiras ${count} linhas: o resultado foi cortado pelo limite da consulta.`;
 }
 
 function truncationNotice(block, count) {
-  return block.truncated ? el('p', { class: 'block-notice' }, truncationText(count)) : null;
+  return block.truncated ? el('p', { class: 'block-notice' }, truncationText(block, count)) : null;
 }
 
 function originText(origin) {
@@ -162,7 +164,7 @@ function toCsv(columns, rows, block, count) {
     '',
     csvCell(block.title ?? ''),
   ];
-  if (block.truncated) lines.push(csvCell(truncationText(count)));
+  if (block.truncated) lines.push(csvCell(truncationText(block, count)));
   if (block.origin) lines.push(csvCell(originText(block.origin)));
   return `\ufeff${lines.join('\r\n')}\r\n`;
 }

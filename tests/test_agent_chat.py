@@ -63,7 +63,7 @@ def fomento_source(tmp_path, monkeypatch):
             );
             INSERT INTO projetos VALUES
                 (1, 'Dengue Bahia', 'Estudo Dengue e Aedes.', 2024, 150.0),
-                (2, 'Robótica Agro', 'Automação no cultivo.', 2024, 80.0),
+                (2, 'Robótica Agro', 'Automação no cultivo.', 2023, 80.0),
                 (3, 'Prevenção Dengue', 'Saúde e dengue.', 2025, 200.0);
         """
         )
@@ -529,8 +529,8 @@ async def test_server_populates_chart_and_table_blocks(
                 'args': {
                     'result_id': 'r1',
                     'chart_type': 'bar',
-                    'title': 'Orçamento por Ano',
-                    'x': 'ano',
+                    'title': 'Orçamento por Projeto',
+                    'x': 'nome',
                     'series': ['orcamento'],
                 },
                 'id': 'c2',
@@ -562,10 +562,10 @@ async def test_server_populates_chart_and_table_blocks(
     assert blocks[0]['text'] == 'Veja o resumo a seguir:\n\nFim'
 
     assert blocks[1]['type'] == 'chart'
-    assert blocks[1]['title'] == 'Orçamento por Ano'
+    assert blocks[1]['title'] == 'Orçamento por Projeto'
     assert len(blocks[1]['data']) == 3  # noqa: PLR2004
-    assert blocks[1]['data'][0]['ano'] == 2024  # noqa: PLR2004
-    assert blocks[1]['data'][0]['orcamento'] == 150.0  # noqa: PLR2004
+    assert 'nome' in blocks[1]['data'][0]
+    assert blocks[1]['data'][0]['orcamento'] == 80.0  # noqa: PLR2004
 
     assert blocks[2]['type'] == 'table'
     assert blocks[2]['title'] == 'Projetos'
@@ -965,7 +965,7 @@ async def test_query_observer_records_source_sql_and_errors(
     first, second = observations
     assert first.source == 'fomento'
     assert '"ano" = 2024' in first.sql
-    assert first.row_count == 2  # noqa: PLR2004
+    assert first.row_count == 1
     assert first.error is None
     assert second.error
     assert second.row_count == 0

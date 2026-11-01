@@ -1,9 +1,11 @@
 """Ferramentas LangChain para consulta e apresentação de dados."""
 
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from unicodedata import normalize
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -21,6 +23,7 @@ from observatorio_maria.catalog.sync import load_entities
 from observatorio_maria.models import CatalogDataSource
 from observatorio_maria.query.errors import QueryValidationError
 from observatorio_maria.query.execution import (
+    QueryResult,
     ResultStore,
     execute_readonly_query,
     sanitize_purpose,
@@ -37,6 +40,7 @@ from observatorio_maria.query.federation import (
 )
 from observatorio_maria.query.sanitization import (
     format_untrusted_data_xml,
+    mask_pii,
     mask_value,
     sanitize_untrusted_text,
 )
@@ -62,6 +66,11 @@ class QueryObservation:
 
 
 QueryObserver = Callable[[QueryObservation], None]
+
+MAX_CHART_GROUPS = 5
+GROUPABLE_CHART_TYPES = {'bar', 'line', 'area'}
+SERIES_KEY_MAX_LENGTH = 40
+NO_GROUP_LABEL = 'Não informado'
 
 EMPTY_RESULT_HINT = (
     'A consulta não trouxe dados (nenhuma linha ou só valores nulos). Se ela '
@@ -145,6 +154,109 @@ def column_label(key: str, labels: dict[str, str] | None) -> str:
     return text[:1].upper() + text[1:]
 
 
+def series_key(value: str, taken: set[str]) -> str:
+    """Chave ASCII de uma série, sem repetir as já usadas."""
+    plain = normalize('NFKD', value).encode('ascii', 'ignore').decode()
+    slug = re.sub(r'[^a-z0-9]+', '_', plain.lower()).strip('_')
+    base = slug[:SERIES_KEY_MAX_LENGTH].rstrip('_') or 'serie'
+    key = base
+    suffix = 1
+    while key in taken:
+        suffix += 1
+        key = f'{base}_{suffix}'
+    taken.add(key)
+    return key
+
+
+def plain_chart_rows(
+    result: QueryResult, chart_type: str, x: str, series: list[str]
+) -> list[dict[str, Any]]:
+    """Registros de um gráfico sem grupo; `x` só repete em dispersão."""
+    x_index = result.columns.index(x)
+    axis_values = [repr(row[x_index]) for row in result.rows]
+    if chart_type != 'scatter' and len(set(axis_values)) < len(axis_values):
+        raise ValueError(
+            f"A coluna '{x}' repete valores no resultado. Informe em group_by "
+            'a coluna que separa as séries ou agregue a consulta para ter '
+            'uma linha por valor de x.'
+        )
+    return [
+        {
+            col_name: val
+            for col_name, val in zip(result.columns, row, strict=False)
+            if col_name == x or col_name in series
+        }
+        for row in result.rows
+    ]
+
+
+def check_group_request(
+    result: QueryResult,
+    chart_type: str,
+    x: str,
+    series: list[str],
+    group_by: str,
+) -> None:
+    """Recusa pedidos com `group_by` que não formam séries por categoria."""
+    if group_by not in result.columns:
+        raise ValueError(f"Coluna '{group_by}' não encontrada no resultado.")
+    if chart_type not in GROUPABLE_CHART_TYPES:
+        raise ValueError(f"group_by não se aplica a gráficos '{chart_type}'.")
+    if group_by == x or group_by in series:
+        raise ValueError(
+            'group_by precisa ser uma coluna diferente de x e das séries.'
+        )
+    if len(series) != 1:
+        raise ValueError('Com group_by, informe uma só coluna em series.')
+
+
+def group_chart_rows(
+    result: QueryResult, x: str, value: str, group_by: str
+) -> tuple[dict[str, str], list[dict[str, Any]]]:
+    """Passa de uma linha por `x` e grupo a uma linha por `x`.
+
+    Devolve as séries (chave → rótulo) e os registros. Combinação sem linha
+    fica nula: zero só seria correto em contagens.
+    """
+    x_index = result.columns.index(x)
+    value_index = result.columns.index(value)
+    group_index = result.columns.index(group_by)
+
+    keys: dict[str, str] = {}
+    taken = {x}
+    labels: dict[str, str] = {}
+    records: dict[str, dict[str, Any]] = {}
+    for row in result.rows:
+        group = row[group_index]
+        label = NO_GROUP_LABEL if group is None else mask_pii(str(group))
+        key = keys.get(repr(group))
+        if key is None:
+            key = series_key(label, taken)
+            keys[repr(group)] = key
+            labels[key] = label
+        record = records.setdefault(repr(row[x_index]), {x: row[x_index]})
+        if key in record:
+            raise ValueError(
+                f"A coluna '{x}' repete um valor no mesmo grupo: agregue a "
+                'consulta antes de pedir o gráfico.'
+            )
+        record[key] = row[value_index]
+
+    if len(labels) > MAX_CHART_GROUPS:
+        raise ValueError(
+            f"A coluna '{group_by}' tem {len(labels)} valores e o limite é "
+            f'{MAX_CHART_GROUPS}. Refaça a consulta mantendo os maiores e, se '
+            'a medida puder ser somada, reúna os demais em "Outros".'
+        )
+    data = [
+        {x: record[x], **{key: record.get(key) for key in labels}}
+        for record in records.values()
+    ]
+    if axis_type(result.column_types.get(x)) != 'category':
+        data.sort(key=lambda record: (record[x] is None, record[x]))
+    return labels, data
+
+
 class ShowChartInput(BaseModel):
     result_id: str = Field(
         description='Identificador do resultado da consulta (ex.: "r1").'
@@ -156,6 +268,15 @@ class ShowChartInput(BaseModel):
     x: str = Field(description='Nome da coluna para o eixo X.')
     series: list[str] = Field(
         description='Lista de nomes de colunas numéricas para as séries.'
+    )
+    group_by: str | None = Field(
+        default=None,
+        description=(
+            'Coluna de categoria que separa as séries, quando o resultado '
+            'tem várias linhas por valor de x (ex.: "modalidade" em ano, '
+            'modalidade, total). Exige uma só coluna em series. Até '
+            f'{MAX_CHART_GROUPS} valores; não vale para pie e scatter.'
+        ),
     )
     labels: dict[str, str] | None = Field(
         default=None,
@@ -502,6 +623,7 @@ class QueryRunner:
         series: list[str],
         labels: dict[str, str] | None = None,
         units: dict[str, str] | None = None,
+        group_by: str | None = None,
     ) -> dict[str, Any]:
         """Registra pedido de gráfico a ser montado pelo servidor."""
         result = self.result_store.get(result_id)
@@ -516,6 +638,36 @@ class QueryRunner:
             if s not in cols_set:
                 return {'error': f"Coluna '{s}' não encontrada no resultado."}
 
+        try:
+            if group_by:
+                check_group_request(result, chart_type, x, series, group_by)
+                groups, data = group_chart_rows(result, x, series[0], group_by)
+                group = {
+                    'key': group_by,
+                    'label': column_label(group_by, labels),
+                }
+                chart_series = [
+                    {
+                        'key': key,
+                        'label': (labels or {}).get(key) or label,
+                        'unit': (units or {}).get(series[0]) or None,
+                    }
+                    for key, label in groups.items()
+                ]
+            else:
+                data = plain_chart_rows(result, chart_type, x, series)
+                group = None
+                chart_series = [
+                    {
+                        'key': s,
+                        'label': column_label(s, labels),
+                        'unit': (units or {}).get(s) or None,
+                    }
+                    for s in series
+                ]
+        except ValueError as exc:
+            return {'error': str(exc)}
+
         chart_block = {
             'type': 'chart',
             'chart_type': chart_type,
@@ -525,22 +677,9 @@ class QueryRunner:
                 'label': column_label(x, labels),
                 'type': axis_type(result.column_types.get(x)),
             },
-            'series': [
-                {
-                    'key': s,
-                    'label': column_label(s, labels),
-                    'unit': (units or {}).get(s) or None,
-                }
-                for s in series
-            ],
-            'data': [
-                {
-                    col_name: val
-                    for col_name, val in zip(result.columns, row, strict=False)
-                    if col_name == x or col_name in series
-                }
-                for row in result.rows
-            ],
+            'series': chart_series,
+            'data': data,
+            'group': group,
             'truncated': result.truncated,
             'origin': result.origin,
         }
@@ -626,7 +765,8 @@ class QueryRunner:
                 name='show_chart',
                 description=(
                     'Gera um gráfico a partir de um resultado prévio. '
-                    'O servidor preenche os dados automaticamente.'
+                    'O servidor preenche os dados automaticamente. Para '
+                    'comparar categorias ao longo de x, use group_by.'
                 ),
                 args_schema=ShowChartInput,
             ),

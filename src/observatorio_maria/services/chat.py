@@ -167,7 +167,11 @@ def summarize_chart(
     """Resume bloco de gráfico para o histórico do modelo."""
     title = block.get('title') or 'Sem título'
     series = block.get('series') or []
-    if isinstance(series, list):
+    group = block.get('group')
+    if group:
+        # Rótulos de séries agrupadas vêm do banco: ficam fora do resumo.
+        series_str = f'uma por {group.get("label", "")}'
+    elif isinstance(series, list):
         labels = [
             s.get('label', s.get('key', '')) if isinstance(s, dict) else str(s)
             for s in series
@@ -738,6 +742,7 @@ class ChatService:
                 series=tc_args.get('series', []),
                 labels=tc_args.get('labels'),
                 units=tc_args.get('units'),
+                group_by=tc_args.get('group_by'),
             )
             return (
                 ToolMessage(content=json.dumps(res), tool_call_id=tc_id),

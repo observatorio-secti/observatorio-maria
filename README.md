@@ -272,6 +272,10 @@ O modelo pode posicionar cada visualização no texto com `[[bloco:N]]`, usando 
 
 Em `show_chart` e `show_table`, o modelo informa rótulos em `labels` (coluna → rótulo) e, nos gráficos, unidades em `units` (série → unidade). As chaves dos blocos continuam sendo as colunas do resultado. Sem rótulo, a coluna usa a chave legível: `total_bolsas` vira `Total bolsas`. Rótulo de coluna fora do bloco é ignorado.
 
+Para comparar categorias ao longo de `x`, `show_chart` recebe `group_by` com a coluna de categoria e uma só coluna em `series`, em gráficos `bar`, `line` ou `area`. A API gera uma série por valor, uma linha de `data` por valor de `x`, e grava a coluna em `group` (`key`, `label`). A chave da série vem do valor, em ASCII (`Bolsa PQ-1A` vira `bolsa_pq_1a`), e o rótulo mantém o texto original. Combinação sem dados fica `null`, e grupo nulo vira `Não informado`. Eixos `number` e `date` saem ordenados. Clientes não precisam tratar esses gráficos à parte: `group` é opcional, e mensagens gravadas sem o campo voltam com ele nulo.
+
+O pedido é recusado, e o modelo recebe o motivo, em três casos: `x` repetido sem `group_by` (dispersão aceita), par de `x` e grupo repetido e mais de 5 grupos. Nada é somado no servidor, porque médias e percentuais não podem ser somados: o modelo refaz a consulta.
+
 No bloco `table`, uma coluna tem o tipo `string` quando a chave traz o termo `ano` ou `year` (`ano_inicio`, `start_year`) e todos os valores são inteiros de 1900 a 2100. Assim, clientes não formatam `2020` como `2.020`. Os valores continuam numéricos nas linhas, e a regra também vale para blocos já gravados.
 
 `chart` e `table` têm `truncated`, verdadeiro quando o resultado foi cortado por `QUERY_MAX_ROWS`. Mensagens gravadas sem o campo valem como `false`. Um `LIMIT` escrito na própria consulta não marca o campo.
@@ -280,7 +284,7 @@ No bloco `table`, uma coluna tem o tipo `string` quando a chave traz o termo `an
 
 No histórico enviado ao modelo, gráficos e tabelas anteriores trazem o resumo e até `HISTORY_MAX_ROWS` linhas, com células de até 200 caracteres. Esses valores vão sempre em `<untrusted_database_data>`, mascarados, mesmo que o bloco gravado seja antigo e não esteja. Gráficos e tabelas novos já nascem com CPF e e-mail mascarados.
 
-Esses blocos anteriores também ficam disponíveis como resultados `h1`, `h2`…, em ordem cronológica, citados no histórico com as chaves das colunas. Assim, `show_chart` e `show_table` reapresentam os dados sem consultar as origens, e o novo bloco herda `truncated` e `origin`, com a data da consulta original. Só o que foi gravado no bloco pode ser reusado.
+Esses blocos anteriores também ficam disponíveis como resultados `h1`, `h2`…, em ordem cronológica, citados no histórico com as chaves das colunas. Em gráficos agrupados, os rótulos das séries vêm do banco e só aparecem nos valores em quarentena. Assim, `show_chart` e `show_table` reapresentam os dados sem consultar as origens, e o novo bloco herda `truncated` e `origin`, com a data da consulta original. Só o que foi gravado no bloco pode ser reusado.
 
 Respostas que consultaram dados terminam com um bloco `suggestions` (`questions`, com até 3 perguntas de continuação), gerado no nível `fast` depois da resposta. Se a geração falhar, o bloco só não vem. Ele fica fora do histórico enviado ao modelo e não aparece na última pergunta permitida da conversa.
 

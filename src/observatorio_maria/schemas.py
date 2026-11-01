@@ -116,6 +116,11 @@ class BlockOrigin(BaseModel):
     coverage: BlockCoverage | None = None
 
 
+class ChartGroup(BaseModel):
+    key: str = Field(description='Coluna que separou as séries.')
+    label: str
+
+
 class ChartBlock(BaseModel):
     type: Literal['chart'] = 'chart'
     chart_type: Literal['bar', 'line', 'area', 'pie', 'scatter']
@@ -124,6 +129,10 @@ class ChartBlock(BaseModel):
     series: list[ChartSeries]
     data: list[dict[str, Any]] = Field(
         description='Registros; cada um contém `x.key` e as `series[].key`.'
+    )
+    group: ChartGroup | None = Field(
+        default=None,
+        description='Coluna de categoria, quando há uma série por valor dela.',
     )
     truncated: bool = Field(
         default=False,

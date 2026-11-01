@@ -144,6 +144,10 @@ main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 .block-chart { background: var(--surface); border-radius: 8px; padding: 10px; }
 .block-chart h4, .block-table h4 { margin: 0 0 8px; font-size: 0.9rem; }
 .block-chart .canvas-wrap { position: relative; height: 240px; }
+@media (max-width: 600px) {
+  /* A legenda de várias séries ocupa boa parte da altura em telas estreitas. */
+  .block-chart .canvas-wrap { height: 340px; }
+}
 .block-table { overflow-x: auto; }
 .block-table table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
 .block-table th, .block-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
