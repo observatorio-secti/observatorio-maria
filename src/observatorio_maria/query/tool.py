@@ -22,6 +22,12 @@ from observatorio_maria.catalog.introspection import (
 from observatorio_maria.catalog.links import load_links
 from observatorio_maria.catalog.sync import load_entities
 from observatorio_maria.models import CatalogDataSource
+from observatorio_maria.query.cards import (
+    PRODUCTION_ID_COLUMNS,
+    RESEARCHER_ID_COLUMNS,
+    hydrate_productions,
+    hydrate_researchers,
+)
 from observatorio_maria.query.errors import QueryValidationError
 from observatorio_maria.query.execution import (
     QueryResult,
@@ -387,7 +393,98 @@ class ShowTableInput(BaseModel):
     )
 
 
+class ShowResearchersInput(BaseModel):
+    result_id: str = Field(
+        description='Identificador do resultado da consulta (ex.: "r1").'
+    )
+    title: str | None = Field(
+        default=None, description='Título opcional do bloco de pesquisadores.'
+    )
+    id_column: str | None = Field(
+        default=None,
+        description=(
+            'Nome da coluna com o id ou lattes_id do pesquisador. Se omitido, '
+            'deduz automaticamente do resultado.'
+        ),
+    )
+
+
+class ShowProductionsInput(BaseModel):
+    result_id: str = Field(
+        description='Identificador do resultado da consulta (ex.: "r1").'
+    )
+    title: str | None = Field(
+        default=None, description='Título opcional do bloco de produções.'
+    )
+    id_column: str | None = Field(
+        default=None,
+        description=(
+            'Nome da coluna com o id ou canonical_id da produção. Se '
+            'omitido, deduz automaticamente do resultado.'
+        ),
+    )
+
+
 ActivityCallback = Callable[[str, str, str], Awaitable[None]]
+
+
+def _resolve_target_column(
+    columns: list[str],
+    requested: str | None,
+    candidates: tuple[str, ...],
+    entity_name: str,
+) -> tuple[str | None, str | None]:
+    if requested:
+        if requested not in columns:
+            return None, f"Coluna '{requested}' não encontrada no resultado."
+        return requested, None
+    for c in columns:
+        if c.lower() in candidates:
+            return c, None
+    return (
+        None,
+        f'Nenhuma coluna de identificador de {entity_name} '
+        f'encontrada em {columns}.',
+    )
+
+
+def _extract_column_ids(
+    result: QueryResult, col_name: str
+) -> tuple[list[str], str | None]:
+    col_idx = result.columns.index(col_name)
+    raw_ids = [
+        str(row[col_idx])
+        for row in result.rows
+        if row[col_idx] is not None
+    ]
+    if not raw_ids:
+        return [], 'A consulta não retornou identificadores.'
+    return raw_ids, None
+
+
+def _prepare_card_hydration(
+    result_store: ResultStore,
+    result_id: str,
+    id_column: str | None,
+    candidates: tuple[str, ...],
+    entity_name: str,
+) -> tuple[QueryResult | None, list[str] | None, str | None]:
+    result = result_store.get(result_id)
+    if not result:
+        return None, None, f"Resultado '{result_id}' não encontrado."
+    target_col, err = _resolve_target_column(
+        result.columns, id_column, candidates, entity_name
+    )
+    if err or not target_col:
+        return None, None, err or 'Coluna não encontrada.'
+    raw_ids, err_ids = _extract_column_ids(result, target_col)
+    if err_ids or not raw_ids:
+        return (
+            None,
+            None,
+            err_ids or 'A consulta não retornou identificadores.',
+        )
+    return result, raw_ids, None
 
 
 class QueryRunner:
@@ -819,6 +916,114 @@ class QueryRunner:
         self.pending_blocks.append(mask_value(table_block))
         return {'status': 'ok', 'block_index': len(self.pending_blocks)}
 
+    async def show_researchers(
+        self,
+        result_id: str,
+        title: str | None = None,
+        id_column: str | None = None,
+    ) -> dict[str, Any]:
+        """Gera cards de pesquisadores a partir de um resultado prévio."""
+        result, raw_ids, err = _prepare_card_hydration(
+            self.result_store,
+            result_id,
+            id_column,
+            RESEARCHER_ID_COLUMNS,
+            'pesquisador',
+        )
+        if err or not result or not raw_ids:
+            return {'error': err or 'Erro na extração de identificadores.'}
+
+        datasource = await self.session.get(CatalogDataSource, 'simcc')
+        if not datasource or not datasource.enabled:
+            return {
+                'error': (
+                    "Fonte de dados 'simcc' não está disponível para "
+                    'hidratação de pesquisadores.'
+                )
+            }
+
+        try:
+            engine = await self._get_engine(datasource)
+            schema = datasource.schemas[0] if datasource.schemas else 'public'
+            cards = await hydrate_researchers(engine, schema, raw_ids)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                'error': f'Erro ao hidratar dados dos pesquisadores: {exc}'
+            }
+
+        if not cards:
+            return {
+                'error': (
+                    'Nenhum pesquisador encontrado no Simcc a partir dos '
+                    'identificadores informados.'
+                )
+            }
+
+        block = {
+            'type': 'researchers',
+            'title': title,
+            'researchers': [c.model_dump() for c in cards],
+            'total': len(cards),
+            'truncated': result.truncated or len(cards) < len(raw_ids),
+            'origin': result.origin,
+        }
+        self.pending_blocks.append(mask_value(block))
+        return {'status': 'ok', 'block_index': len(self.pending_blocks)}
+
+    async def show_productions(
+        self,
+        result_id: str,
+        title: str | None = None,
+        id_column: str | None = None,
+    ) -> dict[str, Any]:
+        """Gera cards de produções a partir de um resultado prévio."""
+        result, raw_ids, err = _prepare_card_hydration(
+            self.result_store,
+            result_id,
+            id_column,
+            PRODUCTION_ID_COLUMNS,
+            'produção',
+        )
+        if err or not result or not raw_ids:
+            return {'error': err or 'Erro na extração de identificadores.'}
+
+        datasource = await self.session.get(CatalogDataSource, 'simcc')
+        if not datasource or not datasource.enabled:
+            return {
+                'error': (
+                    "Fonte de dados 'simcc' não está disponível para "
+                    'hidratação de produções.'
+                )
+            }
+
+        try:
+            engine = await self._get_engine(datasource)
+            schema = datasource.schemas[0] if datasource.schemas else 'public'
+            cards = await hydrate_productions(engine, schema, raw_ids)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                'error': f'Erro ao hidratar dados das produções: {exc}'
+            }
+
+        if not cards:
+            return {
+                'error': (
+                    'Nenhuma produção encontrada no Simcc a partir dos '
+                    'identificadores informados.'
+                )
+            }
+
+        block = {
+            'type': 'productions',
+            'title': title,
+            'productions': [c.model_dump() for c in cards],
+            'total': len(cards),
+            'truncated': result.truncated or len(cards) < len(raw_ids),
+            'origin': result.origin,
+        }
+        self.pending_blocks.append(mask_value(block))
+        return {'status': 'ok', 'block_index': len(self.pending_blocks)}
+
     def build_query_tools(
         self, *, across_sources: bool = False
     ) -> list[StructuredTool]:
@@ -866,6 +1071,26 @@ class QueryRunner:
                     'O servidor preenche os dados automaticamente.'
                 ),
                 args_schema=ShowTableInput,
+            ),
+            StructuredTool.from_function(
+                coroutine=self.show_researchers,
+                name='show_researchers',
+                description=(
+                    'Gera cards ricos de pesquisadores a partir de um '
+                    'resultado prévio com id ou lattes_id. O servidor hidrata '
+                    'os dados completos automaticamente.'
+                ),
+                args_schema=ShowResearchersInput,
+            ),
+            StructuredTool.from_function(
+                coroutine=self.show_productions,
+                name='show_productions',
+                description=(
+                    'Gera cards ricos de produções a partir de um resultado '
+                    'prévio com id ou canonical_id. O servidor hidrata os '
+                    'dados completos automaticamente.'
+                ),
+                args_schema=ShowProductionsInput,
             ),
         ]
 

@@ -1,5 +1,9 @@
 """Pacote de validação e execução de consultas a dados do catálogo."""
 
+from observatorio_maria.query.cards import (
+    hydrate_productions,
+    hydrate_researchers,
+)
 from observatorio_maria.query.errors import (
     QueryCostExceededError,
     QueryValidationError,
@@ -39,6 +43,8 @@ __all__ = [
     'check_query_cost',
     'execute_readonly_query',
     'format_untrusted_data_xml',
+    'hydrate_productions',
+    'hydrate_researchers',
     'infer_column_types',
     'normalize_term',
     'rewrite_match_text',

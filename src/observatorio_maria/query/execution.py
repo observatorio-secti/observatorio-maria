@@ -145,11 +145,34 @@ def result_from_block(
         types = {s.get('key', ''): 'number' for s in block.get('series') or []}
         types[axis.get('key', '')] = axis.get('type', 'category')
         rows = block.get('data') or []
+        row_values = [[row.get(key) for key in keys] for row in rows]
     elif block.get('type') == 'table':
         columns = block.get('columns') or []
         keys = [c.get('key', '') for c in columns]
         types = {c.get('key', ''): c.get('type', 'string') for c in columns}
         rows = block.get('rows') or []
+        row_values = [[row.get(key) for key in keys] for row in rows]
+    elif block.get('type') == 'researchers':
+        researchers = block.get('researchers') or []
+        keys = ['id', 'name', 'lattes_id']
+        types = {'id': 'string', 'name': 'string', 'lattes_id': 'string'}
+        row_values = [
+            [r.get('id'), r.get('name'), r.get('lattes_id')]
+            for r in researchers
+        ]
+    elif block.get('type') == 'productions':
+        productions = block.get('productions') or []
+        keys = ['id', 'title', 'type', 'year']
+        types = {
+            'id': 'string',
+            'title': 'string',
+            'type': 'string',
+            'year': 'number',
+        }
+        row_values = [
+            [p.get('id'), p.get('title'), p.get('type'), p.get('year')]
+            for p in productions
+        ]
     else:
         return None
     origin = block.get('origin') or {}
@@ -158,7 +181,7 @@ def result_from_block(
         source=' e '.join(origin.get('sources') or []),
         sql='',
         columns=keys,
-        rows=[[row.get(key) for key in keys] for row in rows],
+        rows=row_values,
         truncated=bool(block.get('truncated')),
         column_types=types,
         origin=block.get('origin'),

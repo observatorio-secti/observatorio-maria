@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     QUERY_MAX_ROWS: int = Field(100, ge=1)
     QUERY_TIMEOUT_SECONDS: float = Field(15.0, gt=0)
     QUERY_MAX_PER_CALL: int = Field(4, ge=1)
-    QUERY_MAX_ESTIMATED_COST: float = Field(50_000.0, ge=0.0)
+    QUERY_MAX_ESTIMATED_COST: float = Field(100_000.0, ge=0.0)
     MARIA_AGENT_MAX_MODEL_CALLS: int = Field(6, ge=1)
     # Limites das consultas entre fontes (DuckDB em memória).
     QUERY_FEDERATED_MEMORY_LIMIT: str = '512MB'

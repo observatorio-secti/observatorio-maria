@@ -216,8 +216,107 @@ class SuggestionsBlock(BaseModel):
     )
 
 
+# --- Cards de pesquisadores e produções --------------------------------------
+
+
+class ResearcherMetrics(BaseModel):
+    articles: int = 0
+    book_chapters: int = 0
+    books: int = 0
+    patents: int = 0
+    software: int = 0
+    brand: int = 0
+    total_productions: int = 0
+    h_index: int | float | None = None
+    i10_index: int | float | None = None
+    citations: int | None = None
+
+
+class ResearcherAffiliation(BaseModel):
+    institution_id: str | None = None
+    institution_name: str | None = None
+    institution_acronym: str | None = None
+    city_name: str | None = None
+
+
+class ResearcherCard(BaseModel):
+    id: str
+    name: str
+    lattes_id: str | None = None
+    abstract: str | None = None
+    photo_url: str | None = None
+    city: str | None = None
+    state: str | None = None
+    territory: str | None = None
+    graduation: str | None = None
+    openalex_id: str | None = None
+    orcid: str | None = None
+    affiliations: list[ResearcherAffiliation] = Field(default_factory=list)
+    metrics: ResearcherMetrics = Field(default_factory=ResearcherMetrics)
+
+
+class ResearchersBlock(BaseModel):
+    type: Literal['researchers'] = 'researchers'
+    title: str | None = None
+    researchers: list[ResearcherCard]
+    total: int = 0
+    truncated: bool = Field(
+        default=False,
+        description='O resultado foi cortado pelo limite de linhas.',
+    )
+    origin: BlockOrigin | None = None
+
+
+class ProductionAuthor(BaseModel):
+    name: str
+    lattes_id: str | None = None
+    order: int | None = None
+
+
+class ProductionDetails(BaseModel):
+    qualis: str | None = None
+    doi: str | None = None
+    issn: str | None = None
+    isbn: str | None = None
+    magazine: str | None = None
+    event_name: str | None = None
+    event_city: str | None = None
+    nature: str | None = None
+    grant_date: str | None = None
+    status: str | None = None
+
+
+class ProductionCard(BaseModel):
+    id: str
+    title: str
+    type: Literal[
+        'article', 'book', 'book_chapter', 'patent', 'software', 'event'
+    ]
+    type_label: str
+    year: int | None = None
+    authors: list[ProductionAuthor] = Field(default_factory=list)
+    details: ProductionDetails = Field(default_factory=ProductionDetails)
+
+
+class ProductionsBlock(BaseModel):
+    type: Literal['productions'] = 'productions'
+    title: str | None = None
+    productions: list[ProductionCard]
+    total: int = 0
+    truncated: bool = Field(
+        default=False,
+        description='O resultado foi cortado pelo limite de linhas.',
+    )
+    origin: BlockOrigin | None = None
+
+
 ContentBlock = Annotated[
-    TextBlock | ChartBlock | TableBlock | SuggestionsBlock,
+    TextBlock
+    | ChartBlock
+    | TableBlock
+    | ResearchersBlock
+    | ProductionsBlock
+    | SuggestionsBlock,
     Field(discriminator='type'),
 ]
 
@@ -267,7 +366,9 @@ class ContentDeltaPublic(BaseModel):
     """Evento `content.delta`: fragmento do bloco `index` da resposta."""
 
     index: int
-    type: Literal['text', 'chart', 'table', 'suggestions'] = 'text'
+    type: Literal[
+        'text', 'chart', 'table', 'researchers', 'productions', 'suggestions'
+    ] = 'text'
     text: str | None = None
     block: dict[str, Any] | None = None
 

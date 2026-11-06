@@ -344,6 +344,7 @@ def validate_query(sql: str, schema: QuerySchema, max_rows: int = 100) -> str:
         schema.dialect,
         schema.searchable_columns,
         table_resolver,
+        datasource_id=schema.datasource_id,
     )
 
     return qualified.sql(dialect=schema.dialect)

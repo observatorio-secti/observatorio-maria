@@ -6,7 +6,7 @@ Define como o usuário conversa com a Maria: envio de mensagens, resposta do mod
 ## Requirements
 
 ### Requirement: Conteúdo em blocos tipados
-Toda mensagem SHALL expor `content` como uma lista ordenada de blocos. Cada bloco MUST ter o campo discriminador `type`. Os tipos do contrato são `text` (`text` em Markdown), `chart` (`chart_type`, `title`, `x`, `series`, `data`) e `table` (`title`, `columns`, `rows`). Novos tipos SHALL ser adicionados sem alterar os existentes.
+Toda mensagem SHALL expor `content` como uma lista ordenada de blocos. Cada bloco MUST ter o campo discriminador `type`. Os tipos do contrato são `text` (`text` em Markdown), `chart` (`chart_type`, `title`, `x`, `series`, `data`), `table` (`title`, `columns`, `rows`), `researchers` (`title`, `researchers`, `total`, `truncated`, `origin`) e `productions` (`title`, `productions`, `total`, `truncated`, `origin`). Novos tipos SHALL ser adicionados sem alterar os existentes.
 
 #### Scenario: Resposta textual
 - **WHEN** o modelo responde "Olá, sou a Maria"
@@ -14,7 +14,7 @@ Toda mensagem SHALL expor `content` como uma lista ordenada de blocos. Cada bloc
 
 #### Scenario: Contrato publicado
 - **WHEN** o cliente consulta o esquema OpenAPI da API
-- **THEN** os schemas dos blocos `text`, `chart` e `table` estão presentes, discriminados por `type`
+- **THEN** os schemas dos blocos `text`, `chart`, `table`, `researchers` e `productions` estão presentes, discriminados por `type`
 
 ### Requirement: Enviar mensagem
 O sistema SHALL aceitar uma mensagem de texto (1 a 10.000 caracteres) como único campo do corpo, responder 201 com a mensagem do usuário e a resposta do assistente, e persistir ambas na conversa. Campos adicionais MUST ser rejeitados com 422.

@@ -211,6 +211,46 @@ def summarize_table(
     ) + _history_values(block, keys, rows, max_rows)
 
 
+MAX_SUMMARY_RESEARCHER_NAMES = 5
+MAX_SUMMARY_PRODUCTION_TITLES = 3
+
+
+def summarize_researchers(
+    block: dict[str, Any], max_rows: int = 0, result_id: str = ''
+) -> str:
+    """Resume bloco de pesquisadores para o histórico do modelo."""
+    title = block.get('title') or 'Pesquisadores'
+    researchers = block.get('researchers') or []
+    names = [r.get('name', '') for r in researchers if isinstance(r, dict)]
+    name_str = ', '.join(filter(None, names[:MAX_SUMMARY_RESEARCHER_NAMES]))
+    if len(names) > MAX_SUMMARY_RESEARCHER_NAMES:
+        name_str += f' e mais {len(names) - MAX_SUMMARY_RESEARCHER_NAMES}'
+    keys = ['id', 'name', 'lattes_id']
+    reference = _history_reference(result_id, keys) if result_id else ''
+    return (
+        f'[Pesquisadores: {title} | {reference}Amostra: {name_str} | '
+        f'Total: {len(researchers)}]'
+    )
+
+
+def summarize_productions(
+    block: dict[str, Any], max_rows: int = 0, result_id: str = ''
+) -> str:
+    """Resume bloco de produções para o histórico do modelo."""
+    title = block.get('title') or 'Produções'
+    productions = block.get('productions') or []
+    titles = [p.get('title', '') for p in productions if isinstance(p, dict)]
+    title_str = '; '.join(filter(None, titles[:MAX_SUMMARY_PRODUCTION_TITLES]))
+    if len(titles) > MAX_SUMMARY_PRODUCTION_TITLES:
+        title_str += f' e mais {len(titles) - MAX_SUMMARY_PRODUCTION_TITLES}'
+    keys = ['id', 'title', 'type', 'year']
+    reference = _history_reference(result_id, keys) if result_id else ''
+    return (
+        f'[Produções: {title} | {reference}Amostra: {title_str} | '
+        f'Total: {len(productions)}]'
+    )
+
+
 def blocks_to_text(
     blocks: list[dict[str, Any]],
     max_rows: int = 0,
@@ -227,6 +267,10 @@ def blocks_to_text(
             parts.append(summarize_chart(block, max_rows, next(ids)))
         elif btype == 'table':
             parts.append(summarize_table(block, max_rows, next(ids)))
+        elif btype == 'researchers':
+            parts.append(summarize_researchers(block, max_rows, next(ids)))
+        elif btype == 'productions':
+            parts.append(summarize_productions(block, max_rows, next(ids)))
         elif btype == 'suggestions':
             continue
         else:
@@ -253,11 +297,13 @@ def history_block_ids() -> Iterator[str]:
 def restore_history_results(
     history: list[Message], result_store: ResultStore
 ) -> None:
-    """Disponibiliza gráficos e tabelas anteriores como resultados."""
+    """Disponibiliza gráficos, tabelas e cards anteriores como resultados."""
     ids = history_block_ids()
     for message in history:
         for block in message.content:
-            if block.get('type') in {'chart', 'table'}:
+            if block.get('type') in {
+                'chart', 'table', 'researchers', 'productions'
+            }:
                 result = result_from_block(block, next(ids))
                 if result:
                     result_store.restore(result)
@@ -757,6 +803,28 @@ class ChatService:
                 columns=tc_args.get('columns', []),
                 title=tc_args.get('title'),
                 labels=tc_args.get('labels'),
+            )
+            return (
+                ToolMessage(content=json.dumps(res), tool_call_id=tc_id),
+                None,
+            )
+
+        if tc_name == 'show_researchers':
+            res = await query_runner.show_researchers(
+                result_id=tc_args.get('result_id', ''),
+                title=tc_args.get('title'),
+                id_column=tc_args.get('id_column'),
+            )
+            return (
+                ToolMessage(content=json.dumps(res), tool_call_id=tc_id),
+                None,
+            )
+
+        if tc_name == 'show_productions':
+            res = await query_runner.show_productions(
+                result_id=tc_args.get('result_id', ''),
+                title=tc_args.get('title'),
+                id_column=tc_args.get('id_column'),
             )
             return (
                 ToolMessage(content=json.dumps(res), tool_call_id=tc_id),

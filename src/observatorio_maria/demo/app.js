@@ -376,6 +376,254 @@ const blockRenderers = {
     node.append(exportActions([['Baixar CSV', () => saveCsv(block.columns, block.rows, block)]]));
     return node;
   },
+
+  researchers(block) {
+    const node = el('div', { class: 'block block-researchers' });
+    node.append(el('h4', {}, block.title || 'Pesquisadores'));
+
+    const list = el('div', { class: 'cards-list' });
+    (block.researchers || []).forEach((r) => {
+      const card = el('div', { class: 'card-item card-researcher' });
+
+      const header = el('div', { class: 'card-header' });
+      if (r.photo_url) {
+        const img = el('img', {
+          class: 'card-avatar',
+          src: r.photo_url,
+          alt: r.name,
+          loading: 'lazy',
+        });
+        img.onerror = () => { img.style.display = 'none'; };
+        header.append(img);
+      }
+
+      const titleGroup = el('div', { class: 'card-title-group' });
+      titleGroup.append(el('div', { class: 'card-title' }, r.name));
+
+      const sub = el('div', { class: 'card-subtitle' });
+      if (r.lattes_id) {
+        const lattesLink = el(
+          'a',
+          {
+            class: 'card-link',
+            href: `http://lattes.cnpq.br/${r.lattes_id}`,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+          },
+          `Lattes: ${r.lattes_id}`
+        );
+        sub.append(lattesLink);
+      }
+      if (r.orcid) {
+        const orcidLink = el(
+          'a',
+          {
+            class: 'card-link',
+            href: `https://orcid.org/${r.orcid}`,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+          },
+          `ORCID: ${r.orcid}`
+        );
+        sub.append(orcidLink);
+      }
+      titleGroup.append(sub);
+
+      const badges = el('div', { class: 'card-badges' });
+      if (r.territory) {
+        badges.append(el('span', { class: 'badge badge-accent' }, r.territory));
+      }
+      if (r.city || r.state) {
+        const loc = [r.city, r.state].filter(Boolean).join(' - ');
+        badges.append(el('span', { class: 'badge' }, loc));
+      }
+      (r.affiliations || []).forEach((aff) => {
+        const instLabel = aff.institution_acronym || aff.institution_name;
+        if (instLabel) {
+          badges.append(el('span', { class: 'badge' }, instLabel));
+        }
+      });
+      if (badges.children.length > 0) {
+        titleGroup.append(badges);
+      }
+
+      header.append(titleGroup);
+      card.append(header);
+
+      if (r.abstract) {
+        card.append(el('p', { class: 'card-abstract' }, r.abstract));
+      }
+
+      const m = r.metrics || {};
+      const metricBar = el('div', { class: 'card-metrics' });
+      const metricItems = [
+        ['Artigos', m.articles],
+        ['Livros', m.books],
+        ['Capítulos', m.book_chapters],
+        ['Patentes', m.patents],
+        ['Softwares', m.software],
+        ['H-index', m.h_index],
+        ['Citações', m.citations],
+      ];
+      metricItems.forEach(([lbl, val]) => {
+        if (val !== null && val !== undefined && val > 0) {
+          const itemNode = el('div', { class: 'card-metric-item' });
+          itemNode.innerHTML = `${lbl}: <strong>${Number(val).toLocaleString('pt-BR')}</strong>`;
+          metricBar.append(itemNode);
+        }
+      });
+      if (metricBar.children.length > 0) {
+        card.append(metricBar);
+      }
+
+      list.append(card);
+    });
+    node.append(list);
+
+    const notice = truncationNotice(block, (block.researchers || []).length);
+    if (notice) node.append(notice);
+    const origin = originFooter(block.origin);
+    if (origin) node.append(origin);
+
+    const csvCols = [
+      { key: 'name', label: 'Nome' },
+      { key: 'lattes_id', label: 'Lattes' },
+      { key: 'territory', label: 'Território' },
+      { key: 'institutions', label: 'Instituições' },
+      { key: 'articles', label: 'Artigos' },
+      { key: 'total_productions', label: 'Total de Produções' },
+    ];
+    const csvRows = (block.researchers || []).map((r) => ({
+      name: r.name,
+      lattes_id: r.lattes_id || '',
+      territory: r.territory || '',
+      institutions: (r.affiliations || [])
+        .map((a) => a.institution_acronym || a.institution_name)
+        .filter(Boolean)
+        .join('; '),
+      articles: r.metrics?.articles || 0,
+      total_productions: r.metrics?.total_productions || 0,
+    }));
+    node.append(
+      exportActions([['Baixar CSV', () => saveCsv(csvCols, csvRows, block)]])
+    );
+    return node;
+  },
+
+  productions(block) {
+    const node = el('div', { class: 'block block-productions' });
+    node.append(el('h4', {}, block.title || 'Produções Científicas e Tecnológicas'));
+
+    const list = el('div', { class: 'cards-list' });
+    (block.productions || []).forEach((p) => {
+      const card = el('div', { class: 'card-item card-production' });
+
+      const header = el('div', { class: 'card-header' });
+      const titleGroup = el('div', { class: 'card-title-group' });
+
+      const titleRow = el('div', { class: 'card-title' }, p.title);
+      titleGroup.append(titleRow);
+
+      const badges = el('div', { class: 'card-badges' });
+      badges.append(el('span', { class: 'badge badge-accent' }, p.type_label || p.type));
+      if (p.year) {
+        badges.append(el('span', { class: 'badge' }, String(p.year)));
+      }
+      const d = p.details || {};
+      if (d.qualis) {
+        badges.append(el('span', { class: 'badge badge-qualis' }, `Qualis ${d.qualis}`));
+      }
+      if (badges.children.length > 0) {
+        titleGroup.append(badges);
+      }
+
+      header.append(titleGroup);
+      card.append(header);
+
+      const authorsList = (p.authors || []).map((a) => a.name).filter(Boolean);
+      if (authorsList.length > 0) {
+        const authorsNode = el('div', { class: 'card-subtitle' });
+        authorsNode.textContent = `Autores: ${authorsList.join(', ')}`;
+        card.append(authorsNode);
+      }
+
+      const detailsGrid = el('div', { class: 'card-details-grid' });
+      if (d.magazine) {
+        const mag = el('span');
+        mag.innerHTML = `Periódico: <strong>${d.magazine}</strong>`;
+        detailsGrid.append(mag);
+      }
+      if (d.event_name) {
+        const ev = el('span');
+        ev.innerHTML = `Evento: <strong>${d.event_name}</strong>`;
+        detailsGrid.append(ev);
+      }
+      if (d.status) {
+        const st = el('span');
+        st.innerHTML = `Status: <strong>${d.status}</strong>`;
+        detailsGrid.append(st);
+      }
+      if (d.doi) {
+        const doiSpan = el('span');
+        const doiLink = el(
+          'a',
+          {
+            class: 'card-link',
+            href: d.doi.startsWith('http') ? d.doi : `https://doi.org/${d.doi}`,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+          },
+          d.doi
+        );
+        doiSpan.append('DOI: ', doiLink);
+        detailsGrid.append(doiSpan);
+      }
+      if (d.isbn) {
+        const isbnSpan = el('span');
+        isbnSpan.innerHTML = `ISBN: <strong>${d.isbn}</strong>`;
+        detailsGrid.append(isbnSpan);
+      }
+      if (d.issn) {
+        const issnSpan = el('span');
+        issnSpan.innerHTML = `ISSN: <strong>${d.issn}</strong>`;
+        detailsGrid.append(issnSpan);
+      }
+      if (detailsGrid.children.length > 0) {
+        card.append(detailsGrid);
+      }
+
+      list.append(card);
+    });
+    node.append(list);
+
+    const notice = truncationNotice(block, (block.productions || []).length);
+    if (notice) node.append(notice);
+    const origin = originFooter(block.origin);
+    if (origin) node.append(origin);
+
+    const csvCols = [
+      { key: 'title', label: 'Título' },
+      { key: 'type', label: 'Tipo' },
+      { key: 'year', label: 'Ano' },
+      { key: 'authors', label: 'Autores' },
+      { key: 'qualis', label: 'Qualis' },
+      { key: 'doi', label: 'DOI' },
+      { key: 'magazine', label: 'Periódico/Evento' },
+    ];
+    const csvRows = (block.productions || []).map((p) => ({
+      title: p.title,
+      type: p.type_label || p.type,
+      year: p.year || '',
+      authors: (p.authors || []).map((a) => a.name).join('; '),
+      qualis: p.details?.qualis || '',
+      doi: p.details?.doi || '',
+      magazine: p.details?.magazine || p.details?.event_name || '',
+    }));
+    node.append(
+      exportActions([['Baixar CSV', () => saveCsv(csvCols, csvRows, block)]])
+    );
+    return node;
+  },
 };
 
 function suggestionsBlock(block) {
@@ -759,6 +1007,72 @@ const SAMPLE_CONTENT = [
       { territorio: 'Litoral Sul', artigos: 187, livros: 22 },
       { territorio: 'Sudoeste Baiano', artigos: 143, livros: 18 },
     ],
+  },
+  {
+    type: 'researchers',
+    title: 'Pesquisadores em destaque (exemplo)',
+    researchers: [
+      {
+        id: '1',
+        name: 'Dra. Maria Santos Silva',
+        lattes_id: '1234567890123456',
+        abstract: 'Pesquisadora em Saúde Coletiva e Epidemiologia de Doenças Tropicais na Bahia.',
+        photo_url: 'http://servicosweb.cnpq.br/wsprest/sp/prest/padrao/obterFoto/1234567890123456',
+        city: 'Salvador',
+        state: 'BA',
+        territory: 'Metropolitano de Salvador',
+        graduation: 'Doutorado',
+        affiliations: [
+          { institution_name: 'Universidade Federal da Bahia', institution_acronym: 'UFBA', city_name: 'Salvador' }
+        ],
+        metrics: {
+          articles: 42,
+          books: 3,
+          book_chapters: 12,
+          patents: 1,
+          software: 0,
+          brand: 0,
+          total_productions: 58,
+          h_index: 18,
+          citations: 820
+        }
+      }
+    ],
+    total: 1,
+    origin: {
+      sources: ['Produção científica (Simcc)'],
+      description: 'Pesquisadores de destaque',
+      queried_at: '2026-11-06T10:00:00Z',
+    }
+  },
+  {
+    type: 'productions',
+    title: 'Produções científicas recentes (exemplo)',
+    productions: [
+      {
+        id: '101',
+        title: 'Epidemiologia e vigilância genômica do vírus Dengue no estado da Bahia',
+        type: 'article',
+        type_label: 'Artigo em Periódico',
+        year: 2024,
+        authors: [
+          { name: 'Maria Santos Silva', order: 1 },
+          { name: 'João Carlos Pereira', order: 2 }
+        ],
+        details: {
+          qualis: 'A1',
+          doi: '10.1016/j.bjid.2024.102345',
+          issn: '1413-8670',
+          magazine: 'The Brazilian Journal of Infectious Diseases'
+        }
+      }
+    ],
+    total: 1,
+    origin: {
+      sources: ['Produção científica (Simcc)'],
+      description: 'Artigos científicos recentes',
+      queried_at: '2026-11-06T10:00:00Z',
+    }
   },
   { type: 'map', region: 'BA', note: 'Tipo futuro: clientes atuais ignoram com segurança.' },
 ];

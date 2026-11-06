@@ -46,11 +46,11 @@ A página SHALL listar as conversas e permitir criar, abrir, renomear e excluir 
 - **THEN** a lista reflete o novo título e, em seguida, a remoção
 
 ### Requirement: Demonstração do contrato de blocos
-A página SHALL exibir uma resposta de exemplo com blocos `text`, `chart` e `table` renderizados, um bloco de tipo desconhecido ignorado e o JSON correspondente.
+A página SHALL exibir uma resposta de exemplo com blocos `text`, `chart`, `table`, `researchers` e `productions` renderizados, um bloco de tipo desconhecido ignorado e o JSON correspondente.
 
 #### Scenario: Aba de contrato
 - **WHEN** o usuário abre a aba de contrato de blocos
-- **THEN** vê o texto, o gráfico e a tabela renderizados ao lado do JSON
+- **THEN** vê o texto, o gráfico, a tabela e os cards de pesquisadores e produções renderizados ao lado do JSON
 
 ### Requirement: Sem detalhes internos
 A página MUST NOT exibir níveis de modelo, nomes de modelos ou listagem de endpoints.

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,41 @@ def fomento_schema():
         id='fomento',
         name='Fomento à pesquisa',
         connection_env='FOMENTO_DATABASE_URL',
+        schemas=['public'],
+    )
+    return build_query_schema(ds, entities, dialect='postgres')
+
+
+@pytest.fixture
+def simcc_schema():
+    simcc_path = Path('catalog/simcc.yaml')
+    doc = load_catalog_file(simcc_path)
+    entities = []
+    for ed in doc.entities:
+        e = CatalogEntity(
+            datasource_id='simcc',
+            schema_name=ed.schema_name or 'public',
+            name=ed.name,
+            visible=ed.visible,
+            queryable=ed.visible if ed.queryable is None else ed.queryable,
+            present=True,
+        )
+        for cd in ed.columns:
+            c = CatalogColumn(
+                entity_id=e.id,
+                name=cd.name,
+                visible=cd.visible,
+                access=cd.access,
+                searchable=cd.searchable,
+                present=True,
+            )
+            e.columns.append(c)
+        entities.append(e)
+
+    ds = CatalogDataSource(
+        id='simcc',
+        name='Simcc',
+        connection_env='SIMCC_DATABASE_URL',
         schemas=['public'],
     )
     return build_query_schema(ds, entities, dialect='postgres')
@@ -382,6 +418,30 @@ def test_normalize_term_escaping():
     assert normalize_term('Saúde & Inovação') == 'saude & inovacao'
     assert normalize_term('100%_concluído') == '100\\%\\_concluido'
     assert normalize_term("d'água") == "d''agua"
+
+
+def test_match_text_postgres_simcc_uses_f_unaccent(simcc_schema):
+    sql = validate_query(
+        'SELECT r.id, r.name FROM researcher r WHERE '
+        "MATCH_TEXT(r.abstract, 'Dengue', 'Saúde')",
+        simcc_schema,
+    )
+    assert 'public.f_unaccent(LOWER(' in sql
+    assert '%dengue%' in sql
+    assert '%saude%' in sql
+    assert 'ESCAPE' in sql
+    assert 'translate(' not in sql.lower()
+
+
+def test_match_text_sqlite_simcc_uses_translate(simcc_schema):
+    sqlite_schema = replace(simcc_schema, dialect='sqlite')
+    sql = validate_query(
+        'SELECT r.id, r.name FROM researcher r WHERE '
+        "MATCH_TEXT(r.abstract, 'Dengue')",
+        sqlite_schema,
+    )
+    assert 'translate(lower(' in sql.lower()
+    assert 'f_unaccent' not in sql
 
 
 def test_logical_connectors_allowed(sample_schema):

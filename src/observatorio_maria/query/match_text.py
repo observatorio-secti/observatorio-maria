@@ -70,6 +70,7 @@ def rewrite_match_text(
     dialect: str,
     searchable_columns: set[tuple[str, str]],
     table_resolver=None,
+    datasource_id: str | None = None,
 ) -> None:
     """Valida e reescreve todas as chamadas a MATCH_TEXT na AST."""
     for node in ast.find_all(exp.Anonymous):
@@ -91,9 +92,13 @@ def rewrite_match_text(
         raw_terms = _extract_terms(node.expressions[1:])
 
         col_sql = col_expr.sql(dialect=dialect)
-        norm_col = (
-            f"translate(lower({col_sql}), '{FROM_ACCENTS}', '{TO_ACCENTS}')"
-        )
+        if dialect == 'postgres' and datasource_id == 'simcc':
+            norm_col = f'public.f_unaccent(LOWER({col_sql}))'
+        else:
+            norm_col = (
+                f'translate(lower({col_sql}), '
+                f"'{FROM_ACCENTS}', '{TO_ACCENTS}')"
+            )
         clauses = [
             f"{norm_col} LIKE '%{normalize_term(term)}%' ESCAPE '\\'"
             for term in raw_terms

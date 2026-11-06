@@ -210,7 +210,7 @@ As variáveis são lidas do ambiente e do `.env` pelo `Settings` (pydantic-setti
 | `QUERY_MAX_ROWS` | Limite máximo de linhas devolvidas por consulta | `100` |
 | `QUERY_TIMEOUT_SECONDS` | Limite de tempo de execução por consulta na origem | `15` |
 | `QUERY_MAX_PER_CALL` | Máximo de consultas SQL executadas por chamada do modelo | `4` |
-| `QUERY_MAX_ESTIMATED_COST` | Custo estimado máximo de consulta via EXPLAIN no PostgreSQL (0 desliga) | `50000` |
+| `QUERY_MAX_ESTIMATED_COST` | Custo estimado máximo de consulta via EXPLAIN no PostgreSQL (0 desliga) | `100000` |
 | `QUERY_FEDERATED_MEMORY_LIMIT` | Memória de cada consulta entre fontes | `512MB` |
 | `QUERY_FEDERATED_THREADS` | Threads de cada consulta entre fontes | `2` |
 | `QUERY_FEDERATED_MAX_CONCURRENT` | Consultas entre fontes ao mesmo tempo; as demais esperam, dentro do tempo limite | `2` |
@@ -266,9 +266,13 @@ O corpo de envio aceita **somente** `content` (1 a 10.000 caracteres). Campos ex
 ]
 ```
 
-Hoje a Maria produz blocos `text`, `chart` e `table` a partir de consultas a fontes de dados ativas do catálogo.
+Hoje a Maria produz blocos `text`, `chart`, `table`, `researchers` e `productions` a partir de consultas a fontes de dados ativas do catálogo.
 
-O bloco `text` vem primeiro e explica as visualizações: o que mostram, o principal destaque e as ressalvas. Depois de pedir gráficos e tabelas, o modelo é chamado mais uma vez, sem ferramentas, para escrever essa explicação, e a última chamada do orçamento também é sem ferramentas. Uma resposta só com `chart` ou `table` é aceita como exceção, quando o modelo não devolve texto.
+O bloco `text` vem primeiro e explica as visualizações: o que mostram, o principal destaque e as ressalvas. Depois de pedir gráficos, tabelas ou cards estruturados, o modelo é chamado mais uma vez, sem ferramentas, para escrever essa explicação, e a última chamada do orçamento também é sem ferramentas. Uma resposta só com visualizações ou cards é aceita como exceção, quando o modelo não devolve texto.
+
+Além de gráficos e tabelas, a Maria oferece ferramentas especializadas para o Simcc:
+- `show_researchers`: gera um bloco `researchers` com cards completos de pesquisadores hidratados a partir de `id` ou `lattes_id`. Os cards incluem nome, Lattes, link de foto oficial do CNPq, resumo, titulação, cidade/estado, território de identidade, afiliações institucionais e métricas de produtividade (artigos, livros, patentes, softwares, índice H, citações OpenAlex).
+- `show_productions`: gera um bloco `productions` com cards ricos de produções científicas/tecnológicas (artigos, livros, capítulos, patentes, softwares e participação em eventos) hidratados a partir de `id` ou `canonical_id`. Os cards incluem título, tipo padronizado, ano, autores estruturados e detalhes específicos (Qualis periódicos, DOI, ISSN/ISBN, veículo de publicação, status de patentes e dados de eventos).
 
 O modelo pode posicionar cada visualização no texto com `[[bloco:N]]`, usando o `block_index` devolvido pela ferramenta. Nesse caso, `content` tem vários blocos `text`, e o cliente deve renderizar a lista em ordem. Blocos não citados vêm depois do texto, marcadores inválidos são removidos, e o marcador nunca chega ao cliente.
 
@@ -300,7 +304,7 @@ Respostas que consultaram dados terminam com um bloco `suggestions` (`questions`
 |---|---|---|
 | `message.user` | `MessagePublic` da pergunta | Logo no início |
 | `activity` | `{"kind": "query", "source": "…", "description": "…"}` | Antes de cada consulta a uma fonte de dados |
-| `content.delta` | Fragmento de texto (`type: "text", text: "…"`) ou bloco inteiro (`type: "chart"` / `"table"` / `"suggestions"`, `block: {…}`), com `index` crescente: a posição do bloco na resposta | Conforme texto é gerado ou blocos de dados são entregues, na ordem da resposta |
+| `content.delta` | Fragmento de texto (`type: "text", text: "…"`) ou bloco inteiro (`type: "chart"` / `"table"` / `"researchers"` / `"productions"` / `"suggestions"`, `block: {…}`), com `index` crescente: a posição do bloco na resposta | Conforme texto é gerado ou blocos de dados são entregues, na ordem da resposta |
 | `message.assistant` | `MessagePublic` da resposta, **já persistida** | Ao final |
 | `error` | `{"detail": "…"}` | Se o modelo falhar depois de iniciado o stream; nada é gravado |
 

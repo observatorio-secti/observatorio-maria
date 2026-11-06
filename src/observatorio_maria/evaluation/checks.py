@@ -53,6 +53,10 @@ def answer_texts(blocks: list[dict[str, Any]]) -> list[str]:
                 texts.extend(_cell_texts(block.get('rows')))
             case 'chart':
                 texts.extend(_cell_texts(block.get('data')))
+            case 'researchers':
+                texts.extend(_cell_texts(block.get('researchers')))
+            case 'productions':
+                texts.extend(_cell_texts(block.get('productions')))
     return texts
 
 
