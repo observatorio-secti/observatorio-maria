@@ -104,6 +104,7 @@ Além das variáveis da [Configuração](../README.md#️-configuração), o dep
 | `SIMCC_NETWORK` | Rede do Simcc (passo 1). Só precisa ser definida se não for `simcc-network` | `simcc-network` (padrão) |
 | `SIMCC_DATABASE_URL` | Conexão do usuário somente leitura do Simcc (passo 3), pelo host `read_db` | `postgresql+psycopg://maria_leitura:<senha>@read_db:5432/simcc` |
 | `ROOT_PATH` | Prefixo da API no proxy reverso, sem barra final (passo 7) | `/api-maria` |
+| `CORS_ORIGINS` | Origens dos fronts que chamam a API pelo navegador em outro domínio, separadas por vírgula. Dispensável quando o front e a API estão no mesmo domínio | `https://simcc.example.br` |
 
 Recomendado em produção:
 

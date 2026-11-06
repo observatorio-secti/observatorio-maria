@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     DEMO_ENABLED: bool = True
     # Prefixo público da API atrás de proxy reverso (ex.: /api-maria).
     ROOT_PATH: str = ''
+    # Origens liberadas para chamar a API pelo navegador (CORS), separadas
+    # por vírgula (ex.: http://localhost:8080). Vazio desliga o CORS.
+    CORS_ORIGINS: str = ''
     # Intervalo da verificação de defasagem do catálogo; 0 desliga.
     CATALOG_CHECK_INTERVAL_SECONDS: float = 3600
     # Máximo de valores distintos para uma coluna de texto ser categórica.

@@ -4,6 +4,7 @@ from http import HTTPStatus
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -84,6 +85,22 @@ def apply_root_path(app: FastAPI, settings: Settings):
         app.add_middleware(RootPathMiddleware, root_path=root_path)
 
 
+def apply_cors(app: FastAPI, settings: Settings):
+    """Libera as origens configuradas, como o simcc-front em outro domínio."""
+    origins = [
+        origin.strip().rstrip('/')
+        for origin in settings.CORS_ORIGINS.split(',')
+        if origin.strip()
+    ]
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_methods=['GET', 'POST', 'PATCH', 'DELETE'],
+            allow_headers=['Content-Type', 'Accept'],
+        )
+
+
 class DemoFiles(StaticFiles):
     """Arquivos da demo, revalidados a cada acesso para refletir o deploy."""
 
@@ -104,6 +121,7 @@ def mount_demo(app: FastAPI, settings: Settings):
 
 
 apply_root_path(app, Settings())
+apply_cors(app, Settings())
 mount_demo(app, Settings())
 setup_telemetry(app, engine)
 

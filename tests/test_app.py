@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from observatorio_maria.app import apply_root_path, mount_demo
+from observatorio_maria.app import apply_cors, apply_root_path, mount_demo
 from observatorio_maria.settings import Settings
 
 
@@ -89,3 +89,53 @@ async def test_demo_page_can_be_disabled():
         response = await ac.get('/demo/')
 
     assert response.status_code == HTTPStatus.NOT_FOUND
+
+
+def _app_with_cors(origins):
+    app = FastAPI()
+    apply_cors(app, Settings(_env_file=None, CORS_ORIGINS=origins))
+
+    @app.post('/conversations')
+    async def create():
+        return {'id': '1'}
+
+    return AsyncClient(
+        transport=ASGITransport(app=app), base_url='http://test'
+    )
+
+
+def _preflight(ac, origin):
+    return ac.options(
+        '/conversations',
+        headers={
+            'Origin': origin,
+            'Access-Control-Request-Method': 'POST',
+            'Access-Control-Request-Headers': 'content-type',
+        },
+    )
+
+
+async def test_cors_allows_configured_origin():
+    origins = 'http://localhost:8080/, https://simcc.example'
+    async with _app_with_cors(origins) as ac:
+        response = await _preflight(ac, 'http://localhost:8080')
+
+    assert response.status_code == HTTPStatus.OK
+    assert (
+        response.headers['access-control-allow-origin']
+        == 'http://localhost:8080'
+    )
+
+
+async def test_cors_rejects_other_origin():
+    async with _app_with_cors('http://localhost:8080') as ac:
+        response = await _preflight(ac, 'https://outro.example')
+
+    assert 'access-control-allow-origin' not in response.headers
+
+
+async def test_cors_is_off_by_default():
+    async with _app_with_cors('') as ac:
+        response = await _preflight(ac, 'http://localhost:8080')
+
+    assert response.status_code == HTTPStatus.METHOD_NOT_ALLOWED
