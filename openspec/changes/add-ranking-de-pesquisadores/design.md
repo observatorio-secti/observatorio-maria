@@ -10,7 +10,7 @@
 ## Goals / Non-Goals
 
 **Goals:**
-- Mesma ordem que a V2 do Simcc para o mesmo termo e filtros.
+- Mesma ordem que a V2 do Simcc para o mesmo termo e filtros, com a V2 em todas as coleções (decisão 10).
 - Critério fixo no código; o modelo escolhe só termo e filtros.
 - Uma consulta de ranking e uma de evidências por chamada, com tempo previsível em termos amplos.
 
@@ -63,6 +63,9 @@ O texto dos campos considerados (títulos das produções, palavras-chave e resu
 
 ### 9. Testes sem PostgreSQL na suíte
 A suíte testa a montagem do SQL (parâmetros, filtros, ausência de concatenação de texto do usuário) compilando para o dialeto PostgreSQL, e testa a ferramenta com um repositório falso (ranking, evidências, data e disponibilidade). A consulta real é verificada contra o Simcc local depois do refresh. **Alternativa descartada:** emular `tsvector` no SQLite; não existe equivalente e o teste não provaria a ordem real.
+
+### 10. Todas as coleções, e não só a coleção `simcc`
+O Simcc separa os pesquisadores em coleções (`mv_researcher_search.collection_slugs`): no banco local, 10.740 só em `simcc`, 30.309 só em `fomento` (bolsistas da Fapesb importados), 1.228 nas duas e 23 em nenhuma. Por padrão, a busca V2 filtra `collection=['simcc']`. A Maria não filtra coleção, por decisão do usuário: o ranking cobre todos os pesquisadores da base, como as demais consultas da Maria ao Simcc. **Alternativa descartada:** seguir o padrão da V2; os totais e a lista bateriam com o front do Simcc, mas os bolsistas da Fapesb ficariam fora do ranking. Verificado no banco local: com `collection=all` na V2, totais e ordem dos 20 primeiros são idênticos.
 
 ## Risks / Trade-offs
 

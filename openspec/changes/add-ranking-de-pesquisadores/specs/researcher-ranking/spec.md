@@ -28,6 +28,17 @@ O ranking SHALL usar o índice de busca mantido pelo Simcc (as views `mv_search_
 - **WHEN** a ferramenta é executada
 - **THEN** nenhuma instrução além de SELECT é enviada ao banco do Simcc
 
+### Requirement: Todas as coleções do Simcc
+O ranking SHALL considerar os pesquisadores de todas as coleções do Simcc, inclusive os bolsistas da Fapesb importados na coleção `fomento`, e não só a coleção `simcc`, que é o padrão da busca V2. Com o mesmo termo e filtros e a busca V2 em todas as coleções, a ordem e o total MUST ser os mesmos.
+
+#### Scenario: Bolsista só da coleção fomento
+- **WHEN** um pesquisador só da coleção `fomento` tem produções sobre o termo
+- **THEN** ele aparece no ranking e conta no total
+
+#### Scenario: Paridade com a V2 em todas as coleções
+- **WHEN** a Maria e `GET /v2/researcher?q=dengue&sort_by=relevance&collection=all` buscam o mesmo termo
+- **THEN** o total e a ordem dos pesquisadores são os mesmos
+
 ### Requirement: Filtros do ranking
 A ferramenta SHALL aceitar, opcionalmente, ano inicial e final, tipos de produção (artigo, livro, capítulo, patente, software, evento, área de atuação) e uma instituição por sigla ou nome. Período e tipos MUST restringir as produções que contam; com tipos informados, o resumo do currículo MUST deixar de contar. A instituição MUST restringir os pesquisadores.
 

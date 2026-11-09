@@ -547,3 +547,5 @@ def test_tool_rules_guide_thematic_researcher_search():
     assert 'data_as_of' in rules
     assert 'Qualis, citações ou índice h' in rules
     assert 'indisponível' in rules
+    assert 'mantenha a ordem do ranking' in rules
+    assert 'só pelas evidências devolvidas' in rules

@@ -28,9 +28,21 @@
 
 - [x] 5.1 Renderizar em `demo/app.js` e `demo/styles.css` as evidências de cada card (total, contagem por tipo em português, itens com tipo, título e ano; perfil como "Resumo do currículo") e o aviso de ordem acima dos cards com campos, ressalva sobre Qualis, citações e índice h e data em pt-BR.
 - [x] 5.2 Incluir o total de produções sobre o tema no CSV do bloco e `ranking` e `evidence` no exemplo da aba de contrato.
-- [ ] 5.3 Verificar no navegador streaming, conversa reaberta, lista sem `ranking`, CSV e aba de contrato em desktop e a 375px, nos temas claro e escuro.
+- [x] 5.3 Verificar no navegador streaming, conversa reaberta, lista sem `ranking`, CSV e aba de contrato em desktop e a 375px, nos temas claro e escuro.
+
+  Verificado em 2026-11-09 com o modelo real e as views locais preenchidas: "Quem são os especialistas em dengue na Bahia?" gerou o bloco com 10 cards, evidências e o aviso ("os 10 mais relevantes de 815"), igual no streaming e na conversa reaberta, sem rolagem horizontal a 375px. A demo só tem tema claro (requisito "Tema claro" da demo-page), então não há tema escuro a verificar. Na primeira resposta, o texto citava os nomes fora da ordem dos cards; o prompt passou a pedir a ordem do ranking e descrições só pelas evidências (requisito "Pesquisadores do ranking no texto"), e a segunda resposta seguiu as duas regras.
 
 ## 6. Verificação contra o Simcc real
 
-- [ ] 6.1 Depois do refresh das views no Simcc local, rodar `search_researchers` para "dengue", "educação" (termo amplo) e "inteligência artificial" na UFBA, somente leitura, registrar tempos e conferir a ordem contra `GET /v2/researcher?q=...&sort_by=relevance` do simcc-back.
+- [x] 6.1 Depois do refresh das views no Simcc local, rodar `search_researchers` para "dengue", "educação" (termo amplo) e "inteligência artificial" na UFBA, somente leitura, registrar tempos e conferir a ordem contra `GET /v2/researcher?q=...&sort_by=relevance` do simcc-back.
 - [x] 6.2 Rodar `poetry run task test` (lint, testes e cobertura) sem falhas.
+
+  Resultado em 2026-11-09, banco local `simcc_write` (views preenchidas; `mv_refresh_metadata` sem linhas, então `data_as_of` nulo), três execuções da Maria contra a V2 sem cache:
+
+  | Busca | Total | Maria (ms) | V2 (ms) | Ordem dos 20 primeiros |
+  |---|---|---|---|---|
+  | dengue | 815 | 98, 50, 40 | 405 | idêntica |
+  | educação | 20.514 | 330, 269, 253 | 793 | idêntica |
+  | inteligência artificial na UFBA (35 instituições) | 170 | 60, 52, 54 | 75 | idêntica |
+
+  A V2 foi chamada com `collection=all`. Com o padrão dela (`collection=simcc`), "dengue" dá 383 e "educação" 8.124; ver decisão 10 do design.

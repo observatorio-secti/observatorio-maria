@@ -31,6 +31,13 @@ O prompt de regras SHALL orientar o modelo a usar `search_researchers` quando o 
 - **WHEN** o usuário pergunta "Quais pesquisadores têm mais artigos?"
 - **THEN** o modelo continua usando uma consulta comum ordenada pelo número de artigos
 
+### Requirement: Pesquisadores do ranking no texto
+Ao citar no texto pesquisadores de um ranking, o modelo SHALL manter a ordem do ranking e descrever cada um só pelas evidências devolvidas pela ferramenta, sem atribuir temas, métodos ou resultados ausentes delas.
+
+#### Scenario: Ordem e descrição
+- **WHEN** o ranking de "dengue" devolve Maricelia Maia de Lima em primeiro, com evidências de eventos sobre manejo clínico
+- **THEN** o texto a cita antes dos demais e a descreve por essas evidências
+
 ### Requirement: Limitação do ranking na explicação
 Quando o usuário pede uma ordem que o ranking não oferece (por Qualis, citações ou índice h), o modelo SHALL dizer que a lista está ordenada por relevância do tema e que esse critério não está disponível nela.
 
