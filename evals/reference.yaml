@@ -136,6 +136,33 @@ questions:
 
   # --- C. Simcc: perguntas sobre um pesquisador ------------------------------
 
+  # A ordem vem do índice de busca do Simcc (search_researchers), atualizado
+  # pelo refresh das views: por isso as checagens não fixam nomes.
+  - id: especialistas-dengue
+    question: Quem são os especialistas em dengue na Bahia?
+    tags: [simcc-pesquisador, busca-textual]
+    checks:
+      - type: sources
+        required: [simcc]
+        forbidden: [fomento]
+      - type: judge
+        criterion: >-
+          A resposta apresenta pesquisadores ordenados por relevância do tema
+          dengue, diz quantos pesquisadores foram encontrados no total e
+          explica que a ordem considera o resumo do currículo e as produções.
+
+  - id: especialistas-dengue-mais-citados
+    question: Quais os especialistas em dengue mais citados?
+    tags: [simcc-pesquisador, busca-textual, explicacao]
+    checks:
+      - type: sources
+        required: [simcc]
+      - type: judge
+        criterion: >-
+          A resposta diz que a lista está ordenada por relevância do tema e
+          que a ordem por citações não está disponível nela, sem afirmar que
+          os pesquisadores estão ordenados por citações.
+
   - id: artigos-leonardo
     question: Quais artigos publicou o pesquisador Leonardo Campos Cerqueira?
     tags: [simcc-pesquisador]

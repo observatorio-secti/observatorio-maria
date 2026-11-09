@@ -188,6 +188,83 @@ function truncationNotice(block, count) {
   return block.truncated ? el('p', { class: 'block-notice' }, truncationText(block, count)) : null;
 }
 
+// --- Ranking de pesquisadores ------------------------------------------------
+
+const EVIDENCE_TYPES = {
+  ARTICLE: ['artigo', 'artigos'],
+  BOOK: ['livro', 'livros'],
+  BOOK_CHAPTER: ['capítulo', 'capítulos'],
+  PATENT: ['patente', 'patentes'],
+  SOFTWARE: ['software', 'softwares'],
+  PARTICIPATION_EVENT: ['evento', 'eventos'],
+  AREA_SPECIALTY: ['área de atuação', 'áreas de atuação'],
+};
+
+function evidenceTypeLabel(type, count = 1) {
+  const labels = EVIDENCE_TYPES[type];
+  if (!labels) return type.toLowerCase();
+  return count === 1 ? labels[0] : labels[1];
+}
+
+function plural(count, singular, pluralForm) {
+  return `${count.toLocaleString('pt-BR')} ${count === 1 ? singular : pluralForm}`;
+}
+
+function rankingNotice(block) {
+  const ranking = block.ranking;
+  if (!ranking) return null;
+  const shown = (block.researchers || []).length;
+  const total = block.total || shown;
+  const node = el('div', { class: 'ranking-notice', role: 'note' });
+  const found = plural(total, 'pesquisador encontrado', 'pesquisadores encontrados');
+  const top = shown === 1 ? 'o mais relevante' : `os ${shown} mais relevantes`;
+  const scope = total > shown ? `${top} de ${found}` : found;
+  node.append(el('strong', {}, `Ordenados por relevância de “${ranking.term}”: ${scope}.`));
+  if ((ranking.fields || []).length) {
+    node.append(el('p', {}, `A ordem considera só estes campos: ${ranking.fields.join('; ')}.`));
+  }
+  let limits = 'Qualis, citações e índice h não entram na ordem.';
+  if (ranking.data_as_of) {
+    limits += ` Dados de ${new Date(ranking.data_as_of).toLocaleDateString('pt-BR')}.`;
+  }
+  node.append(el('p', {}, limits));
+  return node;
+}
+
+function evidenceSection(evidence) {
+  if (!evidence) return null;
+  const node = el('div', { class: 'card-evidence' });
+  const total = evidence.total || 0;
+  let summary;
+  if (total > 0) {
+    const parts = Object.entries(evidence.by_type || {})
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, count]) => plural(count, evidenceTypeLabel(type, 1), evidenceTypeLabel(type, 2)));
+    summary = `${plural(total, 'produção sobre o tema', 'produções sobre o tema')}`;
+    if (parts.length > 1) summary += ` (${parts.join(', ')})`;
+  } else {
+    summary = 'Nenhuma produção sobre o tema: aparece pelo resumo do currículo.';
+  }
+  node.append(el('div', { class: 'card-evidence-summary' }, summary));
+  const items = evidence.items || [];
+  if (items.length) {
+    const list = el('ul', { class: 'card-evidence-list' });
+    items.forEach((item) => {
+      const li = el('li');
+      if (item.type === 'PROFILE') {
+        li.append(el('span', { class: 'badge badge-accent' }, 'Resumo do currículo'));
+      } else {
+        li.append(el('span', { class: 'badge' }, evidenceTypeLabel(item.type)));
+        li.append(document.createTextNode(` ${item.title || 'Sem título'}`));
+        if (item.year) li.append(el('span', { class: 'muted' }, ` · ${item.year}`));
+      }
+      list.append(li);
+    });
+    node.append(list);
+  }
+  return node;
+}
+
 function originText(origin) {
   const parts = [`Fonte: ${origin.sources.join(' e ')}`, origin.description];
   parts.push(`consultado em ${new Date(origin.queried_at).toLocaleDateString('pt-BR')}`);
@@ -380,6 +457,8 @@ const blockRenderers = {
   researchers(block) {
     const node = el('div', { class: 'block block-researchers' });
     node.append(el('h4', {}, block.title || 'Pesquisadores'));
+    const ranking = rankingNotice(block);
+    if (ranking) node.append(ranking);
 
     const list = el('div', { class: 'cards-list' });
     (block.researchers || []).forEach((r) => {
@@ -476,6 +555,9 @@ const blockRenderers = {
         card.append(metricBar);
       }
 
+      const evidence = evidenceSection(r.evidence);
+      if (evidence) card.append(evidence);
+
       list.append(card);
     });
     node.append(list);
@@ -493,6 +575,8 @@ const blockRenderers = {
       { key: 'articles', label: 'Artigos' },
       { key: 'total_productions', label: 'Total de Produções' },
     ];
+    const hasEvidence = (block.researchers || []).some((r) => r.evidence);
+    if (hasEvidence) csvCols.push({ key: 'theme_productions', label: 'Produções sobre o tema' });
     const csvRows = (block.researchers || []).map((r) => ({
       name: r.name,
       lattes_id: r.lattes_id || '',
@@ -503,6 +587,7 @@ const blockRenderers = {
         .join('; '),
       articles: r.metrics?.articles || 0,
       total_productions: r.metrics?.total_productions || 0,
+      theme_productions: r.evidence ? r.evidence.total || 0 : '',
     }));
     node.append(
       exportActions([['Baixar CSV', () => saveCsv(csvCols, csvRows, block)]])
@@ -1010,7 +1095,7 @@ const SAMPLE_CONTENT = [
   },
   {
     type: 'researchers',
-    title: 'Pesquisadores em destaque (exemplo)',
+    title: 'Especialistas em dengue (exemplo)',
     researchers: [
       {
         id: '1',
@@ -1035,15 +1120,36 @@ const SAMPLE_CONTENT = [
           total_productions: 58,
           h_index: 18,
           citations: 820
-        }
+        },
+        evidence: {
+          total: 38,
+          by_type: { ARTICLE: 30, PARTICIPATION_EVENT: 6, PATENT: 2 },
+          items: [
+            { type: 'ARTICLE', title: 'Epidemiologia e vigilância genômica do vírus Dengue no estado da Bahia', year: 2024 },
+            { type: 'PATENT', title: 'Kit de diagnóstico rápido para arboviroses', year: 2023 },
+            { type: 'PROFILE', title: null, year: null },
+          ],
+        },
       }
     ],
-    total: 1,
+    total: 438,
+    truncated: false,
     origin: {
       sources: ['Produção científica (Simcc)'],
-      description: 'Pesquisadores de destaque',
+      description: 'Buscando especialistas em dengue',
       queried_at: '2026-11-06T10:00:00Z',
-    }
+    },
+    ranking: {
+      term: 'dengue',
+      criterion: 'Ordem por relevância do termo no resumo do currículo e nas produções, com o mesmo critério da busca do Simcc.',
+      fields: [
+        'Títulos de artigos, livros, capítulos, patentes, softwares e eventos',
+        'Palavras-chave e resumos dos artigos (OpenAlex)',
+        'Áreas de atuação',
+        'Nome e resumo do currículo',
+      ],
+      data_as_of: '2026-11-08T03:00:00Z',
+    },
   },
   {
     type: 'productions',

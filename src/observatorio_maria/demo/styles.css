@@ -423,3 +423,30 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   text-decoration: underline;
   word-break: break-all;
 }
+
+/* Ranking de pesquisadores: critério da ordem e evidências */
+.ranking-notice {
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+.ranking-notice p { margin: 4px 0 0; }
+.card-evidence {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  font-size: 0.8rem;
+}
+.card-evidence-summary { font-weight: 600; margin-bottom: 4px; }
+.card-evidence-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.card-evidence-list li { line-height: 1.35; overflow-wrap: anywhere; }
+.card-evidence-list .badge { margin-right: 4px; }

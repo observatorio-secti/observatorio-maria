@@ -66,12 +66,17 @@ from observatorio_maria.query.execution import (
 )
 from observatorio_maria.query.federated_validator import cited_sources
 from observatorio_maria.query.federation import FederationLimits
+from observatorio_maria.query.ranking import DEFAULT_LIMIT
 from observatorio_maria.query.sanitization import (
     format_untrusted_data_xml,
     sanitize_untrusted_text,
     truncate_cell_text,
 )
-from observatorio_maria.query.tool import QueryObserver, QueryRunner
+from observatorio_maria.query.tool import (
+    RANKING_SOURCE,
+    QueryObserver,
+    QueryRunner,
+)
 from observatorio_maria.schemas import SuggestionsBlock, TextBlock
 from observatorio_maria.services.assembly import (
     ContentDelta,
@@ -84,7 +89,7 @@ logger = logging.getLogger(__name__)
 
 AUTO_TITLE_MAX_LENGTH = 60
 
-QUERY_TOOLS = {'query_data', 'query_across_sources'}
+QUERY_TOOLS = {'query_data', 'query_across_sources', 'search_researchers'}
 
 # Nível usado nas respostas do chat. Decisão interna: não é exposta nem
 # configurável por clientes da API.
@@ -302,7 +307,10 @@ def restore_history_results(
     for message in history:
         for block in message.content:
             if block.get('type') in {
-                'chart', 'table', 'researchers', 'productions'
+                'chart',
+                'table',
+                'researchers',
+                'productions',
             }:
                 result = result_from_block(block, next(ids))
                 if result:
@@ -832,6 +840,7 @@ class ChatService:
             )
 
         across = tc_name == 'query_across_sources'
+        ranking = tc_name == 'search_researchers'
         if across:
             cited = cited_sources(tc_args.get('sql', ''))
             found = [await query_runner._get_datasource(s) for s in cited]
@@ -841,7 +850,9 @@ class ChatService:
                 for s, ds in zip(cited, found, strict=True)
             )
         else:
-            source_id = tc_args.get('source', '')
+            source_id = (
+                RANKING_SOURCE if ranking else tc_args.get('source', '')
+            )
             ds = await query_runner._get_datasource(source_id)
             source_name = ds.name if ds else source_id
         purpose = sanitize_purpose(tc_args.get('purpose'), source_name)
@@ -857,12 +868,27 @@ class ChatService:
                 tc_name, openinference_span_kind='tool'
             )
         tool_span.set_attribute(SpanAttributes.TOOL_NAME, tc_name)
-        tool_span.set_input(tc_args.get('sql', ''))
+        tool_span.set_input(
+            json.dumps(tc_args, ensure_ascii=False)
+            if ranking
+            else tc_args.get('sql', '')
+        )
         tool_span.set_attribute('datasource.id', source_id)
 
         outcome = 'executed'
         try:
-            if across:
+            if ranking:
+                res = await query_runner.search_researchers(
+                    term=tc_args.get('term', ''),
+                    purpose=tc_args.get('purpose', ''),
+                    title=tc_args.get('title'),
+                    year_start=tc_args.get('year_start'),
+                    year_end=tc_args.get('year_end'),
+                    source_types=tc_args.get('source_types'),
+                    institution=tc_args.get('institution'),
+                    limit=tc_args.get('limit') or DEFAULT_LIMIT,
+                )
+            elif across:
                 res = await query_runner.query_across_sources(
                     tc_args.get('sql', ''),
                     purpose=tc_args.get('purpose', ''),

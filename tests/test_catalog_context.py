@@ -315,6 +315,14 @@ async def test_simcc_instructions_in_context(session):
     assert '100' not in text.split('## Instruções')[1].split('## Entidades')[0]
 
 
+async def test_simcc_thematic_researcher_search_uses_ranking(session):
+    text = await seeded_context(session, 'catalog/simcc.yaml')
+
+    assert '`search_researchers`' in text
+    assert 'MATCH_TEXT(r.abstract' not in text
+    assert 'Pesquisadores que publicaram artigos sobre dengue' not in text
+
+
 async def test_fomento_instructions_point_to_simcc(session):
     text = await seeded_context(session, 'catalog/fomento.yaml')
 

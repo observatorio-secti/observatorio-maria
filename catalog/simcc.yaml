@@ -35,10 +35,7 @@ datasource:
     - Ligação com o fomento: `researcher.lattes_id` é o mesmo identificador de `pesquisadores.lattes` na fonte `fomento`. Para relacionar as duas fontes, use a consulta entre fontes, e não listas de Lattes copiadas de outra consulta.
     - Para apresentar listas de pesquisadores, inclua `r.id` ou `r.lattes_id` na consulta e use sempre a ferramenta `show_researchers` em vez de tabela.
     - Para apresentar listas de produções científicas/tecnológicas, inclua `id` ou `canonical_id` na consulta e use sempre a ferramenta `show_productions` em vez de tabela.
-    - Buscas temáticas de pesquisadores: ao buscar quem pesquisa ou produz sobre um tema (ex.: dengue, inteligência artificial):
-      1. Para encontrar especialistas pela linha declarada no currículo, consulte o resumo (`researcher.abstract`): `SELECT r.id, r.name FROM public.researcher r WHERE MATCH_TEXT(r.abstract, '...') LIMIT 10`.
-      2. Para buscar por artigos (`bibliographic_production`), junte com `researcher`, filtre com `MATCH_TEXT(bp.title, '...')` e, se não houver período especificado pelo usuário, adote um recorte dos últimos 5 anos (`bp.year_ >= 2020`) para manter a consulta rápida e informe na resposta o recorte adotado.
-      3. Apresente os pesquisadores encontrados sempre com a ferramenta `show_researchers`.
+    - Buscas temáticas de pesquisadores: para saber quem pesquisa ou produz sobre um tema (ex.: dengue, inteligência artificial), use a ferramenta `search_researchers`, e não `query_data`. Ela ordena os pesquisadores por relevância do tema no resumo do currículo e nas produções (o mesmo critério da busca do Simcc), mostra as evidências e já cria os cards.
   examples:
     - question: "Quantos artigos foram publicados por ano a partir de 2020?"
       sql: >-
@@ -52,12 +49,6 @@ datasource:
     - question: "Projetos de pesquisa do currículo sobre educação"
       sql: >-
         SELECT title, start_year, agency_name FROM public.mv_canonical_research_projects WHERE MATCH_TEXT(title, 'educação') ORDER BY start_year DESC
-    - question: "Pesquisadores que trabalham com inteligência artificial"
-      sql: >-
-        SELECT r.id, r.name FROM public.researcher r WHERE MATCH_TEXT(r.abstract, 'inteligência artificial') LIMIT 10
-    - question: "Pesquisadores que publicaram artigos sobre dengue"
-      sql: >-
-        SELECT r.id, r.name, COUNT(*) AS artigos FROM public.researcher r JOIN public.bibliographic_production bp ON bp.researcher_id = r.id WHERE MATCH_TEXT(bp.title, 'dengue') AND bp.year_ >= 2020 GROUP BY r.id, r.name ORDER BY artigos DESC LIMIT 10
     - question: "Quais pesquisadores têm mais artigos?"
       sql: >-
         SELECT r.id, r.name, rp.articles FROM public.researcher_production rp JOIN public.researcher r ON r.id = rp.researcher_id ORDER BY rp.articles DESC LIMIT 10

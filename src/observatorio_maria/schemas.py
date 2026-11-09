@@ -239,6 +239,31 @@ class ResearcherAffiliation(BaseModel):
     city_name: str | None = None
 
 
+class EvidenceItem(BaseModel):
+    type: str = Field(
+        description=(
+            'Tipo da evidência: ARTICLE, BOOK, BOOK_CHAPTER, PATENT, '
+            'SOFTWARE, PARTICIPATION_EVENT, AREA_SPECIALTY ou PROFILE '
+            '(resumo do currículo).'
+        )
+    )
+    title: str | None = None
+    year: int | None = None
+
+
+class ResearcherEvidence(BaseModel):
+    total: int = Field(
+        default=0, description='Produções que casam com o termo buscado.'
+    )
+    by_type: dict[str, int] = Field(
+        default_factory=dict, description='Produções que casam, por tipo.'
+    )
+    items: list[EvidenceItem] = Field(
+        default_factory=list,
+        description='Até 3 evidências mais relevantes.',
+    )
+
+
 class ResearcherCard(BaseModel):
     id: str
     name: str
@@ -253,6 +278,20 @@ class ResearcherCard(BaseModel):
     orcid: str | None = None
     affiliations: list[ResearcherAffiliation] = Field(default_factory=list)
     metrics: ResearcherMetrics = Field(default_factory=ResearcherMetrics)
+    evidence: ResearcherEvidence | None = None
+
+
+class RankingInfo(BaseModel):
+    term: str = Field(description='Termo buscado.')
+    criterion: str = Field(description='Como a ordem foi definida.')
+    fields: list[str] = Field(
+        default_factory=list,
+        description='Campos considerados na ordem.',
+    )
+    data_as_of: datetime | None = Field(
+        default=None,
+        description='Data do último refresh do índice de busca do Simcc.',
+    )
 
 
 class ResearchersBlock(BaseModel):
@@ -265,6 +304,10 @@ class ResearchersBlock(BaseModel):
         description='O resultado foi cortado pelo limite de linhas.',
     )
     origin: BlockOrigin | None = None
+    ranking: RankingInfo | None = Field(
+        default=None,
+        description='Presente quando a lista é um ranking por relevância.',
+    )
 
 
 class ProductionAuthor(BaseModel):

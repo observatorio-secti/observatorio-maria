@@ -10,7 +10,8 @@ API da **Maria**, agente de IA do Observatório Maria voltado à pesquisa cient�
 |---|---|
 | **Conversas** | Criar, listar (paginado, mais recentes primeiro), detalhar, renomear e excluir (as mensagens vão junto). Título automático a partir da primeira pergunta. |
 | **Chat** | Envio de mensagem com resposta completa ou em **streaming (SSE)**, com o texto chegando enquanto é gerado. O histórico da conversa é enviado como contexto ao modelo. |
-| **Contrato de conteúdo** | Mensagens em **blocos tipados** (`text`, `chart`, `table`), prontos para gráficos e tabelas no frontend. |
+| **Contrato de conteúdo** | Mensagens em **blocos tipados** (`text`, `chart`, `table`, `researchers`, `productions`), prontos para gráficos, tabelas e cards no frontend. |
+| **Ranking de pesquisadores** | Busca por tema no Simcc ordenada por relevância, com o critério da busca V2 do Simcc, evidências em cada card e a data dos dados. |
 | **Modelos de IA** | Três níveis internos (`fast`, `medium`, `advanced`), configuráveis por ambiente e independentes de provedor. Não são expostos nem escolhidos pelo cliente. |
 | **Confiabilidade** | Persistência atômica: pergunta e resposta só são gravadas quando a geração termina. Falhas e interrupções não deixam registros parciais. |
 | **Observabilidade** | Traces, métricas e logs via OpenTelemetry. O caminho de cada resposta da IA fica visível no Arize Phoenix. Stack local com Grafana, Tempo, Loki e Prometheus. |
@@ -95,6 +96,13 @@ catalog/            ← introspecção somente leitura → banco de origem (ex.:
 │   ├── llm/
 │   │   ├── registry.py              # ModelTier, ModelRegistry e get_model_registry
 │   │   └── prompts.py               # Prompt de sistema da Maria
+│   ├── query/                       # Ferramentas do agente sobre as fontes
+│   │   ├── validator.py · execution.py  # Validação do SQL e execução somente leitura
+│   │   ├── federation.py · federated_validator.py  # Consultas entre fontes (DuckDB)
+│   │   ├── match_text.py · sanitization.py  # MATCH_TEXT, quarentena e mascaramento
+│   │   ├── cards.py                 # Hidratação dos cards de pesquisadores e produções
+│   │   ├── ranking.py               # Ranking de pesquisadores sobre o índice de busca do Simcc
+│   │   └── tool.py                  # QueryRunner e ferramentas LangChain
 │   ├── services/
 │   │   ├── chat.py                  # ChatService (stream_message / send_message)
 │   │   └── assembly.py              # Divide o texto e posiciona gráficos e tabelas
@@ -272,7 +280,24 @@ O bloco `text` vem primeiro e explica as visualizações: o que mostram, o princ
 
 Além de gráficos e tabelas, a Maria oferece ferramentas especializadas para o Simcc:
 - `show_researchers`: gera um bloco `researchers` com cards completos de pesquisadores hidratados a partir de `id` ou `lattes_id`. Os cards incluem nome, Lattes, link de foto oficial do CNPq, resumo, titulação, cidade/estado, território de identidade, afiliações institucionais e métricas de produtividade (artigos, livros, patentes, softwares, índice H, citações OpenAlex).
+- `search_researchers`: encontra pesquisadores que trabalham com um tema e os ordena por relevância, com o mesmo critério da busca V2 do Simcc (ver **Ranking de pesquisadores** em 🗂️ Catálogo de dados). Cria o bloco `researchers` na ordem do ranking, com `ranking` no bloco e `evidence` em cada card, sem passar por `show_researchers`.
 - `show_productions`: gera um bloco `productions` com cards ricos de produções científicas/tecnológicas (artigos, livros, capítulos, patentes, softwares e participação em eventos) hidratados a partir de `id` ou `canonical_id`. Os cards incluem título, tipo padronizado, ano, autores estruturados e detalhes específicos (Qualis periódicos, DOI, ISSN/ISBN, veículo de publicação, status de patentes e dados de eventos).
+
+Num bloco `researchers` vindo de `search_researchers`, `total` é o número de pesquisadores encontrados (os cards são os mais relevantes, até 20) e `truncated` é falso. Os campos novos são opcionais, e blocos gravados sem eles continuam válidos:
+
+```json
+{"type": "researchers", "title": "Especialistas em dengue", "total": 438, "truncated": false,
+ "ranking": {"term": "dengue",
+             "criterion": "Ordem por relevância do termo no resumo do currículo e nas produções, com o mesmo critério da busca do Simcc.",
+             "fields": ["Títulos de artigos, livros, capítulos, patentes, softwares e eventos", "Palavras-chave e resumos dos artigos (OpenAlex)", "Áreas de atuação", "Nome e resumo do currículo"],
+             "data_as_of": "2026-11-08T03:00:00Z"},
+ "researchers": [{"id": "…", "name": "…", "metrics": {"articles": 120},
+                  "evidence": {"total": 38, "by_type": {"ARTICLE": 30, "PATENT": 8},
+                               "items": [{"type": "ARTICLE", "title": "…", "year": 2025},
+                                         {"type": "PROFILE", "title": null, "year": null}]}}]}
+```
+
+`evidence.items` traz até 3 evidências pela maior relevância. Os tipos são `ARTICLE`, `BOOK`, `BOOK_CHAPTER`, `PATENT`, `SOFTWARE`, `PARTICIPATION_EVENT`, `AREA_SPECIALTY` e `PROFILE` (o resumo do currículo, sem o texto). `data_as_of` é a data do último refresh do índice de busca do Simcc e pode ser nula.
 
 O modelo pode posicionar cada visualização no texto com `[[bloco:N]]`, usando o `block_index` devolvido pela ferramenta. Nesse caso, `content` tem vários blocos `text`, e o cliente deve renderizar a lista em ordem. Blocos não citados vêm depois do texto, marcadores inválidos são removidos, e o marcador nunca chega ao cliente.
 
@@ -351,6 +376,8 @@ Há duas fontes:
 | `simcc` | Banco de leitura do Simcc (`SIMCC_DATABASE_URL`) | Currículo Lattes: artigos, livros, capítulos, patentes, softwares, participação em eventos e projetos de pesquisa |
 
 **Simcc.** As tabelas base do Simcc têm uma linha por pesquisador autor e servem para perguntas sobre pesquisadores. As views `mv_canonical_*` têm uma linha por produção, sem repetir coautores, e servem para totais. As instruções da fonte explicam isso ao modelo. Arrays, JSON, `tsvector` e campos internos do ETL do Simcc ficam ocultos. Nome, ORCID e resumo do currículo têm acesso `full`, por decisão do projeto: a Maria pode citar pesquisadores, inclusive ao relacionar com bolsistas do fomento. Para mudar isso, passe as colunas para `aggregate` ou oculte-as pela API ou pela demo. Um pesquisador pode ter várias instituições, ligadas por `researcher_institution`; o antigo `researcher.institution_id` fica fora do contexto, e as instruções orientam `COUNT(DISTINCT ...)` ao contar pesquisadores por instituição.
+
+**Ranking de pesquisadores.** Perguntas por tema ("quem pesquisa dengue?") usam a ferramenta `search_researchers`, e não SQL escrito pelo modelo. Ela lê, somente leitura e com SQL fixo, o índice de busca que o simcc-back mantém: `mv_search_documents` (títulos das produções, palavras-chave e resumos dos artigos do OpenAlex e áreas de atuação) e `mv_researcher_search` (nome e resumo do currículo). A ordem segue a busca V2 do Simcc: relevância do resumo × 1,5 + maior relevância entre as produções + ln(produções que casam + 1), com desempate por nome. O termo usa a busca em português sem acentos (radicais, `"frase exata"`, `OR` e `-exclusão`). Filtros opcionais: período e tipos das produções (com tipos, o resumo não conta) e instituição por sigla ou nome. Com sigla ou nome exato, entram também as unidades com o texto no nome ("Escola de Enfermagem - UFBA"), e um texto que casa com mais de 20 instituições sem correspondência exata é recusado como ambíguo. A data dos dados vem de `mv_refresh_metadata`. Qualis, citações e índice h não entram na ordem, e a demo avisa isso. A Maria nunca cria nem atualiza essas views: com elas ausentes ou vazias, a ferramenta devolve erro e o modelo diz que a busca por relevância está indisponível. A ferramenta conta no limite de consultas por chamada e respeita `QUERY_TIMEOUT_SECONDS`, mas não passa pelo validador nem pelo teto de custo, porque a consulta é fixa e usa os índices GIN das views.
 
 **Território de identidade no Simcc.** O território é um dado do vínculo, em `researcher_institution.identity_territory`, e um pesquisador pode contar em mais de um. As instruções da fonte orientam `COUNT(DISTINCT researcher_id)`, proíbem somar territórios como total geral e mandam dizer que o dado não está disponível quando a coluna estiver vazia, sem inferir o território por cidade ou instituição.
 

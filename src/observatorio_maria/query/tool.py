@@ -45,6 +45,17 @@ from observatorio_maria.query.federation import (
     FederationLimits,
     execute_federated_query,
 )
+from observatorio_maria.query.ranking import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    RANKING_CRITERION,
+    RANKING_FIELDS,
+    SOURCE_TYPES,
+    RankingFilters,
+    RankingOutcome,
+    rank_researchers,
+    ranking_statement,
+)
 from observatorio_maria.query.sanitization import (
     format_untrusted_data_xml,
     mask_pii,
@@ -57,7 +68,11 @@ from observatorio_maria.query.validator import (
     source_dialect,
     validate_query,
 )
-from observatorio_maria.schemas import is_year_column
+from observatorio_maria.schemas import (
+    EvidenceItem,
+    ResearcherEvidence,
+    is_year_column,
+)
 
 
 @dataclass(frozen=True)
@@ -409,6 +424,55 @@ class ShowResearchersInput(BaseModel):
     )
 
 
+class SearchResearchersInput(BaseModel):
+    term: str = Field(
+        description=(
+            'Tema buscado, em português, como o usuário escreveu (ex.: '
+            '"dengue", "inteligência artificial"). Aceita "frase exata", '
+            'OR entre alternativas (ex.: "dengue OR arbovirose") e -termo '
+            'para excluir.'
+        )
+    )
+    purpose: str = Field(
+        default='',
+        description=(
+            'Descrição curta do que está sendo buscado, para quem lê '
+            '(ex.: "Buscando especialistas em dengue").'
+        ),
+    )
+    title: str | None = Field(
+        default=None, description='Título opcional do bloco de pesquisadores.'
+    )
+    year_start: int | None = Field(
+        default=None,
+        description='Ano inicial das produções que contam, quando pedido.',
+    )
+    year_end: int | None = Field(
+        default=None,
+        description='Ano final das produções que contam, quando pedido.',
+    )
+    source_types: list[str] | None = Field(
+        default=None,
+        description=(
+            'Tipos de produção que contam, só quando o usuário restringir: '
+            + ', '.join(
+                f'{key} ({label})' for key, label in SOURCE_TYPES.items()
+            )
+            + '. Com tipos informados, o resumo do currículo não conta.'
+        ),
+    )
+    institution: str | None = Field(
+        default=None,
+        description=(
+            'Sigla ou nome da instituição, quando pedida (ex.: "UFBA").'
+        ),
+    )
+    limit: int = Field(
+        default=DEFAULT_LIMIT,
+        description=f'Quantos pesquisadores mostrar (até {MAX_LIMIT}).',
+    )
+
+
 class ShowProductionsInput(BaseModel):
     result_id: str = Field(
         description='Identificador do resultado da consulta (ex.: "r1").'
@@ -426,6 +490,71 @@ class ShowProductionsInput(BaseModel):
 
 
 ActivityCallback = Callable[[str, str, str], Awaitable[None]]
+Ranker = Callable[..., Awaitable[RankingOutcome]]
+
+RANKING_SOURCE = 'simcc'
+RANKING_COLUMNS = ['id', 'nome', 'producoes_sobre_o_tema', 'evidencias']
+NO_RANKING_HINT = (
+    'Nenhum pesquisador casa com o termo. Tente sinônimos com OR, um termo '
+    'mais geral ou sem os filtros, antes de dizer que não há pesquisadores.'
+)
+
+
+def ranking_filters(  # noqa: PLR0913, PLR0917
+    term: str,
+    year_start: int | None,
+    year_end: int | None,
+    source_types: list[str] | None,
+    institution: str | None,
+) -> RankingFilters:
+    """Valida termo e filtros da busca de pesquisadores."""
+    clean = (term or '').strip()
+    if not clean:
+        raise QueryValidationError(
+            'Informe o termo da busca de pesquisadores (ex.: "dengue").'
+        )
+    types = tuple(dict.fromkeys(t.strip().upper() for t in source_types or []))
+    unknown = [t for t in types if t not in SOURCE_TYPES]
+    if unknown:
+        raise QueryValidationError(
+            f'Tipos de produção desconhecidos: {", ".join(unknown)}. '
+            f'Use: {", ".join(SOURCE_TYPES)}.'
+        )
+    if (
+        year_start is not None
+        and year_end is not None
+        and year_start > year_end
+    ):
+        raise QueryValidationError(
+            'O ano inicial não pode ser maior que o ano final.'
+        )
+    return RankingFilters(
+        term=clean,
+        year_start=year_start,
+        year_end=year_end,
+        source_types=types,
+        institution=(institution or '').strip() or None,
+    )
+
+
+def researcher_evidence(evidence) -> ResearcherEvidence:
+    """Evidências de um pesquisador, com títulos como dados não confiáveis."""
+    return ResearcherEvidence(
+        total=evidence.total,
+        by_type=dict(evidence.by_type),
+        items=[
+            EvidenceItem(
+                type=item['type'],
+                title=(
+                    sanitize_untrusted_text(item['title'])
+                    if item.get('title')
+                    else None
+                ),
+                year=item.get('year'),
+            )
+            for item in evidence.items
+        ],
+    )
 
 
 def _resolve_target_column(
@@ -453,9 +582,7 @@ def _extract_column_ids(
 ) -> tuple[list[str], str | None]:
     col_idx = result.columns.index(col_name)
     raw_ids = [
-        str(row[col_idx])
-        for row in result.rows
-        if row[col_idx] is not None
+        str(row[col_idx]) for row in result.rows if row[col_idx] is not None
     ]
     if not raw_ids:
         return [], 'A consulta não retornou identificadores.'
@@ -504,6 +631,7 @@ class QueryRunner:
         engine_factory: Callable[[str], AsyncEngine] | None = None,
         query_observer: QueryObserver | None = None,
         federation_limits: FederationLimits | None = None,
+        ranker: Ranker | None = None,
     ):
         self.session = session
         self.result_store = result_store
@@ -518,6 +646,7 @@ class QueryRunner:
         self.federation_limits = federation_limits or FederationLimits(
             max_rows=max_rows, timeout_seconds=timeout_seconds
         )
+        self.ranker = ranker or rank_researchers
 
         self.queries_in_current_call: int = 0
         self.total_queries: int = 0
@@ -970,6 +1099,207 @@ class QueryRunner:
         self.pending_blocks.append(mask_value(block))
         return {'status': 'ok', 'block_index': len(self.pending_blocks)}
 
+    async def search_researchers(  # noqa: PLR0913, PLR0917
+        self,
+        term: str,
+        purpose: str = '',
+        title: str | None = None,
+        year_start: int | None = None,
+        year_end: int | None = None,
+        source_types: list[str] | None = None,
+        institution: str | None = None,
+        limit: int = DEFAULT_LIMIT,
+    ) -> dict[str, Any]:
+        """Ranqueia pesquisadores por relevância e cria o bloco de cards."""
+        response, sql = await self._run_search_researchers(
+            term,
+            purpose,
+            title,
+            year_start,
+            year_end,
+            source_types,
+            institution,
+            limit,
+        )
+        if self.query_observer:
+            self.query_observer(
+                QueryObservation(
+                    source=RANKING_SOURCE,
+                    sql=sql,
+                    row_count=len(response.get('rows', [])),
+                    error=response.get('error'),
+                )
+            )
+        return response
+
+    async def _run_search_researchers(  # noqa: PLR0911, PLR0913, PLR0917
+        self,
+        term: str,
+        purpose: str,
+        title: str | None,
+        year_start: int | None,
+        year_end: int | None,
+        source_types: list[str] | None,
+        institution: str | None,
+        limit: int,
+    ) -> tuple[dict[str, Any], str]:
+        self.queries_in_current_call += 1
+        self.total_queries += 1
+
+        def refused(message: str, sql: str = '') -> tuple[dict, str]:
+            return {'error': message, 'calls_left': self.calls_left}, sql
+
+        if self.queries_in_current_call > self.max_per_call:
+            return refused(
+                'Limite de consultas por chamada excedido '
+                f'(máximo {self.max_per_call}).'
+            )
+        try:
+            filters = ranking_filters(
+                term, year_start, year_end, source_types, institution
+            )
+        except QueryValidationError as exc:
+            return refused(exc.message)
+
+        datasource = await self._get_datasource(RANKING_SOURCE)
+        if not datasource or not datasource.enabled:
+            return refused(
+                'A busca de pesquisadores por relevância está indisponível: '
+                "a fonte 'simcc' não está ativa."
+            )
+        if source_dialect(datasource) != 'postgres':
+            return refused(
+                'A busca de pesquisadores por relevância exige o banco '
+                'PostgreSQL do Simcc.'
+            )
+
+        schema = datasource.schemas[0] if datasource.schemas else 'public'
+        sql = str(
+            ranking_statement(
+                filters,
+                schema=schema,
+                with_institutions=bool(filters.institution),
+            )
+        )
+        await self._emit_activity(datasource, purpose)
+        size = min(max(int(limit or DEFAULT_LIMIT), 1), MAX_LIMIT)
+        try:
+            engine = await self._get_engine(datasource)
+            outcome = await self.ranker(
+                engine,
+                schema,
+                filters,
+                limit=size,
+                timeout_seconds=self.timeout_seconds,
+            )
+            if not outcome.researchers:
+                return {
+                    'rows': [],
+                    'total': 0,
+                    'hint': NO_RANKING_HINT,
+                    'calls_left': self.calls_left,
+                }, sql
+            cards = await hydrate_researchers(
+                engine, schema, [r.researcher_id for r in outcome.researchers]
+            )
+        except QueryValidationError as exc:
+            return refused(exc.message, sql)
+        except ConnectionNotConfiguredError:
+            return refused(
+                "A fonte 'simcc' não possui conexão configurada.", sql
+            )
+        except SourceUnavailableError:
+            return refused("A fonte 'simcc' está indisponível.", sql)
+        except Exception as exc:  # noqa: BLE001
+            return refused(f'Erro ao ordenar pesquisadores: {exc}', sql)
+
+        return self._ranking_block(
+            datasource, filters, outcome, cards, title, purpose, sql
+        ), sql
+
+    def _ranking_block(  # noqa: PLR0913, PLR0917
+        self,
+        datasource: CatalogDataSource,
+        filters: RankingFilters,
+        outcome: RankingOutcome,
+        cards: list,
+        title: str | None,
+        purpose: str,
+        sql: str,
+    ) -> dict[str, Any]:
+        for card in cards:
+            evidence = outcome.evidence.get(card.id)
+            if evidence is not None:
+                card.evidence = researcher_evidence(evidence)
+
+        rows = [
+            [
+                card.id,
+                card.name,
+                card.evidence.total if card.evidence else 0,
+                '; '.join(
+                    item.title or 'resumo do currículo'
+                    for item in (card.evidence.items if card.evidence else [])
+                ),
+            ]
+            for card in cards
+        ]
+        origin = build_origin([datasource.name or datasource.id], purpose)
+        result = self.result_store.add(
+            datasource.id,
+            sql,
+            list(RANKING_COLUMNS),
+            rows,
+            truncated=False,
+            column_types={
+                'id': 'string',
+                'nome': 'string',
+                'producoes_sobre_o_tema': 'number',
+                'evidencias': 'string',
+            },
+            origin=origin,
+        )
+        data_as_of = (
+            outcome.data_as_of.isoformat() if outcome.data_as_of else None
+        )
+        block = {
+            'type': 'researchers',
+            'title': title,
+            'researchers': [card.model_dump() for card in cards],
+            'total': outcome.total,
+            'truncated': False,
+            'origin': result.origin,
+            'ranking': {
+                'term': sanitize_untrusted_text(filters.term),
+                'criterion': RANKING_CRITERION,
+                'fields': list(RANKING_FIELDS),
+                'data_as_of': data_as_of,
+            },
+        }
+        self.pending_blocks.append(mask_value(block))
+
+        sanitized_rows = [
+            [sanitize_untrusted_text(val) for val in row] for row in rows
+        ]
+        return {
+            'result_id': result.result_id,
+            'columns': result.columns,
+            'rows': sanitized_rows,
+            'untrusted_data': format_untrusted_data_xml(
+                datasource.name or datasource.id,
+                result.result_id,
+                result.columns,
+                sanitized_rows,
+                truncated=False,
+            ),
+            'total': outcome.total,
+            'shown': len(cards),
+            'data_as_of': data_as_of,
+            'criterion': RANKING_CRITERION,
+            'block_index': len(self.pending_blocks),
+            'calls_left': self.calls_left,
+        }
+
     async def show_productions(
         self,
         result_id: str,
@@ -1001,9 +1331,7 @@ class QueryRunner:
             schema = datasource.schemas[0] if datasource.schemas else 'public'
             cards = await hydrate_productions(engine, schema, raw_ids)
         except Exception as exc:  # noqa: BLE001
-            return {
-                'error': f'Erro ao hidratar dados das produções: {exc}'
-            }
+            return {'error': f'Erro ao hidratar dados das produções: {exc}'}
 
         if not cards:
             return {
@@ -1081,6 +1409,18 @@ class QueryRunner:
                     'os dados completos automaticamente.'
                 ),
                 args_schema=ShowResearchersInput,
+            ),
+            StructuredTool.from_function(
+                coroutine=self.search_researchers,
+                name='search_researchers',
+                description=(
+                    'Encontra pesquisadores do Simcc que trabalham com um '
+                    'tema e os ordena por relevância (resumo do currículo e '
+                    'produções), com evidências. Já cria os cards: não '
+                    'chame show_researchers depois. Devolve o total '
+                    'encontrado, a data dos dados e o block_index.'
+                ),
+                args_schema=SearchResearchersInput,
             ),
             StructuredTool.from_function(
                 coroutine=self.show_productions,

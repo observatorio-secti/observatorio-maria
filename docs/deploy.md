@@ -86,6 +86,16 @@ ALTER DEFAULT PRIVILEGES FOR ROLE <READ_DB_USER> IN SCHEMA public
 ALTER ROLE maria_leitura SET default_transaction_read_only = on;
 ```
 
+O ranking de pesquisadores por relevância (`search_researchers`) lê o índice de busca que o **simcc-back** mantém no mesmo banco: as views materializadas `mv_search_documents` e `mv_researcher_search` e a tabela `mv_refresh_metadata`. A Maria só lê essas views; quem cria e atualiza é o simcc-back, no refresh periódico. Se elas forem criadas por outro usuário que não `<READ_DB_USER>`, repita o `GRANT SELECT` depois de criadas ou ajuste o `ALTER DEFAULT PRIVILEGES` para esse usuário. Confira o acesso com:
+
+```sql
+SET ROLE maria_leitura;
+SELECT count(*) FROM mv_search_documents;
+SELECT view_name, refreshed_at FROM mv_refresh_metadata;
+```
+
+Com as views vazias ou sem acesso, a Maria diz ao usuário que a busca por relevância está indisponível em vez de listar pesquisadores sem ordem.
+
 Troque `<READ_DB_NAME>` (padrão `simcc`) e `<READ_DB_USER>` (padrão `postgres`) pelos valores do `.env` do `simcc-etl`. Os dois bancos são servidores diferentes, então o mesmo nome `maria_leitura` pode existir nos dois com senhas distintas.
 
 ### 4. Configurar o `.env` da Maria
@@ -162,6 +172,8 @@ O seed não sobrescreve o que já está no catálogo. Quando um YAML de fonte mu
   - `researcher.institution_id` oculta (`PATCH /catalog/columns/{id}` com `{"visible": false}`).
 
   - no `simcc`, as instruções e os exemplos de território de identidade (`PATCH /catalog/datasources/simcc`, copiando de `catalog/simcc.yaml`) e `researcher_institution.identity_territory` com `list_values: never` e pesquisável (`PATCH /catalog/columns/{id}`).
+
+  - no `simcc`, a instrução de buscas temáticas de pesquisadores, que passou a orientar a ferramenta `search_researchers`, e a remoção dos exemplos "Pesquisadores que trabalham com inteligência artificial" e "Pesquisadores que publicaram artigos sobre dengue" (`PATCH /catalog/datasources/simcc` com `instructions` e `examples`, copiando de `catalog/simcc.yaml`).
 
   Confira o resultado em `GET /catalog/concepts/context` e `GET /catalog/datasources/simcc/context`.
 
