@@ -36,6 +36,8 @@ datasource:
     - Para apresentar listas de pesquisadores, inclua `r.id` ou `r.lattes_id` na consulta e use sempre a ferramenta `show_researchers` em vez de tabela.
     - Para apresentar listas de produções científicas/tecnológicas, inclua `id` ou `canonical_id` na consulta e use sempre a ferramenta `show_productions` em vez de tabela.
     - Buscas temáticas de pesquisadores: para saber quem pesquisa ou produz sobre um tema (ex.: dengue, inteligência artificial), use a ferramenta `search_researchers`, e não `query_data`. Ela ordena os pesquisadores por relevância do tema no resumo do currículo e nas produções (o mesmo critério da busca do Simcc), mostra as evidências e já cria os cards.
+    - Programas de pós-graduação (`graduate_program` e `graduate_program_researcher`): se um pesquisador existe em `graduate_program_researcher`, ele faz parte do programa atualmente (não use filtro temporal ou de ano para o vínculo). Como a tabela pode repetir o mesmo `(graduate_program_id, researcher_id)` por legado de schema, sempre conte docentes com `COUNT(DISTINCT researcher_id)` e, ao cruzar com produções, deduplica primeiro em uma CTE (`SELECT DISTINCT graduate_program_id, researcher_id FROM public.graduate_program_researcher`).
+    - Produção de um programa de pós-graduação: as views `mv_canonical_*` não permitem filtrar por programa no SQL; parta de `graduate_program` e da CTE distinta de `graduate_program_researcher` para as tabelas base (`bibliographic_production`, `patent`, `software`, `participation_events`, `research_project`), deduplicando coautores do mesmo programa (em `bibliographic_production`, conte com `COUNT(DISTINCT COALESCE(NULLIF(bp.doi, ''), LOWER(bp.title) || '-' || CAST(bp.year_ AS TEXT)))`). Para comparar o total individual de cada docente do programa, use `researcher_production`.
   examples:
     - question: "Quantos artigos foram publicados por ano a partir de 2020?"
       sql: >-
@@ -55,6 +57,12 @@ datasource:
     - question: "Quantos pesquisadores há por território de identidade?"
       sql: >-
         SELECT identity_territory, COUNT(DISTINCT researcher_id) AS pesquisadores FROM public.researcher_institution WHERE identity_territory IS NOT NULL GROUP BY identity_territory ORDER BY pesquisadores DESC
+    - question: "Quantos pesquisadores fazem parte de cada programa de pós-graduação?"
+      sql: >-
+        SELECT gp.name, gp.acronym, COUNT(DISTINCT gpr.researcher_id) AS pesquisadores FROM public.graduate_program gp JOIN public.graduate_program_researcher gpr ON gpr.graduate_program_id = gp.graduate_program_id GROUP BY gp.graduate_program_id, gp.name, gp.acronym ORDER BY pesquisadores DESC
+    - question: "Quantos artigos por ano foram publicados pelos pesquisadores de um programa de pós-graduação?"
+      sql: >-
+        WITH program_researchers AS (SELECT DISTINCT gpr.graduate_program_id, gpr.researcher_id FROM public.graduate_program_researcher gpr JOIN public.graduate_program gp ON gp.graduate_program_id = gpr.graduate_program_id WHERE MATCH_TEXT(gp.name, 'biotecnologia') OR MATCH_TEXT(gp.acronym, 'biotecnologia')) SELECT bp.year_, COUNT(DISTINCT COALESCE(NULLIF(bp.doi, ''), LOWER(bp.title) || '-' || CAST(bp.year_ AS TEXT))) AS artigos FROM program_researchers pr JOIN public.bibliographic_production bp ON bp.researcher_id = pr.researcher_id WHERE bp.type = 'ARTICLE' GROUP BY bp.year_ ORDER BY bp.year_ DESC
 
 
 entities:
@@ -114,6 +122,71 @@ entities:
         searchable: true
         label: Território de identidade
         description: Território de identidade da Bahia do vínculo.
+
+  - name: graduate_program
+    label: Programas de pós-graduação
+    description: >-
+      Programas de pós-graduação stricto sensu (mestrado e doutorado)
+      vinculados às instituições no Simcc.
+    synonyms: [programa de pós-graduação, pós-graduação, PPG, mestrado, doutorado]
+    columns:
+      - name: graduate_program_id
+        description: Identificador interno.
+      - name: name
+        list_values: never
+        searchable: true
+        label: Nome
+        description: Nome do programa de pós-graduação.
+      - name: acronym
+        list_values: never
+        searchable: true
+        label: Sigla
+        description: Sigla do programa de pós-graduação.
+      - name: area
+        searchable: true
+        label: Área de avaliação
+        description: Área de avaliação CAPES do programa.
+      - name: basic_area
+        label: Área básica
+      - name: modality
+        label: Modalidade
+      - name: type
+        label: Nível
+        description: "Tipo ou nível do programa (ex.: mestrado, doutorado)."
+      - name: rating
+        label: Nota CAPES
+        description: Conceito ou nota CAPES do programa.
+      - name: institution_id
+        description: Instituição sede do programa.
+      - name: city
+        list_values: never
+        label: Cidade
+      - name: state
+        label: UF
+      - name: code
+        list_values: never
+        label: Código CAPES
+
+  - name: graduate_program_researcher
+    label: Pesquisadores nos programas de pós-graduação
+    description: >-
+      Vínculo entre pesquisadores e programas de pós-graduação. Se o
+      pesquisador existe nesta tabela, ele faz parte do programa atualmente
+      (sem recorte temporal ativo). Pode haver linhas repetidas para o mesmo
+      par programa/pesquisador por legado de schema: use DISTINCT ao contar ou
+      cruzar com produções.
+    synonyms: [docente do programa, membro do PPG, pesquisador do programa]
+    columns:
+      - name: graduate_program_id
+        description: Programa de pós-graduação.
+      - name: researcher_id
+        description: Pesquisador vinculado ao programa.
+      - name: type_
+        label: Tipo de vínculo
+        description: Categoria do vínculo do docente no programa.
+      - name: tag
+        list_values: never
+        label: Etiqueta
 
   - name: city
     label: Cidades
