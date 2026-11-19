@@ -33,6 +33,8 @@ datasource:
     - `identity_territory` pode não estar preenchida. Se uma consulta por ela vier vazia ou só com nulos, confira com `COUNT(identity_territory)` e diga ao usuário que o dado não está disponível na base. Nunca infira o território por cidade, instituição ou conhecimento próprio.
     - `researcher_production` tem as contagens de produção de cada pesquisador, prontas para rankings.
     - Ligação com o fomento: `researcher.lattes_id` é o mesmo identificador de `pesquisadores.lattes` na fonte `fomento`. Para relacionar as duas fontes, use a consulta entre fontes, e não listas de Lattes copiadas de outra consulta.
+    - Bolsistas de produtividade (PQ, DT, CNPq/Lattes): ficam na tabela `foment`, ligada a `researcher` por `researcher_id`. Um pesquisador pode ter mais de um registro em `foment`, portanto conte bolsistas com `COUNT(DISTINCT f.researcher_id)`. A tabela `foment` não possui datas de início ou término (é o retrato atual do currículo Lattes importado no Simcc): nunca invente filtro de vigência sobre `foment`.
+    - Produção de bolsistas de produtividade: junte `foment` com `researcher` e `researcher_production` (para totais individuais ou rankings) ou com as tabelas base (`bibliographic_production`, `patent`, `software` etc.), usando `COUNT(DISTINCT ...)` ao agregar produções entre vários bolsistas para não repetir coautores. Para filtrar por tema entre bolsistas de produtividade, use `query_data` com `MATCH_TEXT` em `researcher.abstract` ou no título da produção, pois `search_researchers` não filtra por `foment`.
     - Para apresentar listas de pesquisadores, inclua `r.id` ou `r.lattes_id` na consulta e use sempre a ferramenta `show_researchers` em vez de tabela.
     - Para apresentar listas de produções científicas/tecnológicas, inclua `id` ou `canonical_id` na consulta e use sempre a ferramenta `show_productions` em vez de tabela.
     - Buscas temáticas de pesquisadores: para saber quem pesquisa ou produz sobre um tema (ex.: dengue, inteligência artificial), use a ferramenta `search_researchers`, e não `query_data`. Ela ordena os pesquisadores por relevância do tema no resumo do currículo e nas produções (o mesmo critério da busca do Simcc), mostra as evidências e já cria os cards.
@@ -57,6 +59,12 @@ datasource:
     - question: "Quantos pesquisadores há por território de identidade?"
       sql: >-
         SELECT identity_territory, COUNT(DISTINCT researcher_id) AS pesquisadores FROM public.researcher_institution WHERE identity_territory IS NOT NULL GROUP BY identity_territory ORDER BY pesquisadores DESC
+    - question: "Quantos bolsistas de produtividade existem por nível?"
+      sql: >-
+        SELECT category_level_code, COUNT(DISTINCT researcher_id) AS bolsistas FROM public.foment WHERE modality_code IN ('PQ', 'DT') GROUP BY category_level_code ORDER BY bolsistas DESC
+    - question: "Quais bolsistas de produtividade têm mais artigos publicados?"
+      sql: >-
+        SELECT DISTINCT r.id, r.name, rp.articles FROM public.foment f JOIN public.researcher r ON r.id = f.researcher_id JOIN public.researcher_production rp ON rp.researcher_id = r.id WHERE f.modality_code IN ('PQ', 'DT') ORDER BY rp.articles DESC LIMIT 10
     - question: "Quantos pesquisadores fazem parte de cada programa de pós-graduação?"
       sql: >-
         SELECT gp.name, gp.acronym, COUNT(DISTINCT gpr.researcher_id) AS pesquisadores FROM public.graduate_program gp JOIN public.graduate_program_researcher gpr ON gpr.graduate_program_id = gp.graduate_program_id GROUP BY gp.graduate_program_id, gp.name, gp.acronym ORDER BY pesquisadores DESC
@@ -447,6 +455,44 @@ entities:
         label: Título
       - name: type
         label: Tipo
+
+  - name: foment
+    label: Bolsistas de produtividade e fomento (Lattes)
+    description: >-
+      Bolsas de produtividade e auxílios de fomento declarados no currículo
+      Lattes dos pesquisadores (como PQ e DT do CNPq). Retrato atual do
+      currículo importado no Simcc, sem datas de início ou término.
+    synonyms: [bolsista de produtividade, bolsistas de produtividade, bolsa de produtividade, PQ, DT, produtividade em pesquisa, fomento CNPq]
+    columns:
+      - name: id
+        description: Identificador interno.
+      - name: researcher_id
+        description: Pesquisador bolsista.
+      - name: modality_code
+        label: Código da modalidade
+        description: Sigla da modalidade de bolsa ou auxílio (ex. PQ, DT).
+      - name: modality_name
+        label: Modalidade
+        description: Nome da modalidade de bolsa ou auxílio.
+        searchable: true
+      - name: category_level_code
+        label: Nível/Categoria
+        description: Nível ou categoria da bolsa de produtividade (ex. 1A, 1B, 1C, 1D, 2, SR).
+      - name: call_title
+        list_values: never
+        label: Edital / Chamada
+        searchable: true
+      - name: funding_program_name
+        list_values: never
+        label: Programa de fomento
+        searchable: true
+      - name: institute_name
+        list_values: never
+        label: Agência / Instituto
+      - name: aid_quantity
+        label: Quantidade de auxílios
+      - name: scholarship_quantity
+        label: Quantidade de bolsas
 
   - name: mv_canonical_articles
     label: Artigos (sem duplicatas)

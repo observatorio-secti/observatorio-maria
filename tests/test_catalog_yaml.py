@@ -524,3 +524,22 @@ def test_seeds_mark_non_category_columns():
         'nome',
         'nome_normalizado',
     }
+
+
+def test_simcc_seed_exposes_foment_productivity_fellows():
+    document = load_catalog_file(Path('catalog/simcc.yaml'))
+    entities = {e.name: e for e in document.entities}
+
+    assert 'foment' in entities
+    foment = entities['foment']
+    assert 'bolsista de produtividade' in foment.synonyms
+    assert 'PQ' in foment.synonyms
+    columns = {c.name for c in foment.columns}
+    assert {
+        'id',
+        'researcher_id',
+        'modality_code',
+        'modality_name',
+        'category_level_code',
+    } <= columns
+    assert 'sequence_code' not in columns

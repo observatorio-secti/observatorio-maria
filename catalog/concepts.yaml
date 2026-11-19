@@ -49,8 +49,9 @@ concepts:
       Lattes (nome, ORCID e resumo).
     synonyms: [pesquisador, bolsista, docente]
     instructions: |
-      - Fomento: bolsistas, isto é, pessoas que receberam bolsa. Use para perguntas sobre bolsistas e bolsas.
-      - Simcc: pesquisadores com currículo Lattes na plataforma. Use para nomes, ORCID, currículo e produção.
+      - Fomento: bolsistas, isto é, pessoas que receberam bolsa na base do módulo de fomento. Use para perguntas genéricas sobre bolsistas e bolsas estaduais/FAPESB.
+      - Simcc: pesquisadores com currículo Lattes na plataforma. Use para nomes, ORCID, currículo, produção e também para **bolsistas de produtividade** (PQ, DT, CNPq/Lattes), que ficam na tabela `simcc:public.foment` (sem datas de vigência).
+      - Desambiguação de bolsistas: quando a pergunta falar em "bolsista de produtividade", "bolsa de produtividade", "PQ" ou "DT", consulte `simcc:public.foment` junto com `simcc:public.researcher` (e não a fonte `fomento`).
       - Pergunta genérica, como "quantos pesquisadores existem?": responda pelo fomento, diga que o número é de bolsistas do fomento e mencione numa frase quantos pesquisadores com currículo há no Simcc ou que esse número pode ser consultado.
       - A única ligação entre as fontes é o Lattes (`pesquisadores.lattes` = `researcher.lattes_id`). Nunca some as contagens das duas fontes.
       - Produção durante a bolsa: só quando a pergunta pedir esse período, use a consulta entre fontes com `bp.year_ >= EXTRACT(YEAR FROM b.quando_iniciou) AND (b.quando_terminou IS NULL OR bp.year_ <= EXTRACT(YEAR FROM b.quando_terminou))`, porque a bolsa sem término não tem limite final. Aplique o filtro de status das bolsas e `bp.type = 'ARTICLE'` quando a pergunta for sobre artigos.
