@@ -67,10 +67,11 @@ catalog/            ← introspecção somente leitura → banco de origem (ex.:
 ├── pyproject.toml / poetry.lock     # Dependências, Ruff, Pytest e Taskipy
 ├── alembic.ini · migrations/        # Migrações do banco (Alembic async)
 ├── Dockerfile · compose.prod.yaml   # Imagem e deploy em produção
-├── docs/deploy.md                   # Guia de deploy ao lado do fomento e do Simcc
+├── docs/deploy.md                   # Guia de deploy ao lado das fontes de dados
 ├── catalog/                         # Seeds YAML do catálogo (um arquivo por fonte)
 │   ├── fomento.yaml
-│   └── simcc.yaml
+│   ├── simcc.yaml
+│   └── oda.yaml
 ├── evals/
 │   ├── reference.yaml               # Perguntas de referência para `task eval`
 │   └── results/                     # Relatórios JSON das avaliações (fora do git)
@@ -98,6 +99,7 @@ catalog/            ← introspecção somente leitura → banco de origem (ex.:
 │   │   └── prompts.py               # Prompt de sistema da Maria
 │   ├── query/                       # Ferramentas do agente sobre as fontes
 │   │   ├── validator.py · execution.py  # Validação do SQL e execução somente leitura
+│   │   ├── row_scope.py              # Escopo obrigatório dos grupos ODA/SIMCC
 │   │   ├── federation.py · federated_validator.py  # Consultas entre fontes (DuckDB)
 │   │   ├── match_text.py · sanitization.py  # MATCH_TEXT, quarentena e mascaramento
 │   │   ├── cards.py                 # Hidratação dos cards de pesquisadores e produções
@@ -156,7 +158,7 @@ Preencha ao menos o `OPENAI_API_KEY`. Sem a stack de observabilidade rodando, de
 alembic upgrade head
 ```
 
-Para carregar o catálogo das fontes, defina `FOMENTO_DATABASE_URL` e `SIMCC_DATABASE_URL` e rode o seed (veja [Catálogo de dados](#-catálogo-de-dados)):
+Para carregar o catálogo das fontes, defina as URLs das fontes que estiverem disponíveis e rode o seed (veja [Catálogo de dados](#-catálogo-de-dados)):
 
 ```bash
 task seed
@@ -184,13 +186,13 @@ Com a stack no ar e `OTEL_SDK_DISABLED=false`, a API passa a enviar telemetria a
 
 ## 🚢 Deploy em produção
 
-A Maria sobe em um projeto Docker Compose próprio (`compose.prod.yaml`), ao lado do observatório de fomento e do Simcc, sem alterar os composes deles. Guarda conversas e catálogo num SQLite dentro de um volume Docker, sem servidor de banco próprio, só **lê** o banco do fomento e o banco de leitura do Simcc pelas redes Docker deles e expõe a API na porta `11309`.
+A Maria sobe em um projeto Docker Compose próprio (`compose.prod.yaml`), ao lado do observatório de fomento, do Simcc e do ODA, sem alterar os composes deles. Guarda conversas e catálogo num SQLite dentro de um volume Docker, sem servidor de banco próprio, só **lê** os bancos de origem pelas redes Docker e expõe a API na porta `11309`.
 
 ```bash
 docker compose -f compose.prod.yaml up -d --build
 ```
 
-Antes de subir, crie os usuários somente leitura nos bancos do fomento e do Simcc e configure `FOMENTO_NETWORK`, `FOMENTO_DATABASE_URL` e `SIMCC_DATABASE_URL` (e `SIMCC_NETWORK`, se a rede do Simcc não for `simcc-network`). O passo a passo completo, com operação e cuidados, está em [docs/deploy.md](docs/deploy.md).
+Antes de subir, crie/configure usuários somente leitura nos bancos do fomento, Simcc e ODA e configure as redes e URLs correspondentes. Para o ODA, use `ODA_NETWORK` (padrão `maria_IA`) e `ODA_DATABASE_URL`. O passo a passo completo está em [docs/deploy.md](docs/deploy.md).
 
 ---
 
@@ -228,6 +230,8 @@ As variáveis são lidas do ambiente e do `.env` pelo `Settings` (pydantic-setti
 | `HISTORY_MAX_ROWS` | Linhas de cada gráfico e tabela anteriores enviadas ao modelo no histórico. `0` envia só o resumo | `20` |
 | `FOMENTO_DATABASE_URL` | URL do banco do fomento, com driver assíncrono (`postgresql+psycopg://…`). O nome da variável é definido por fonte no catálogo | — |
 | `SIMCC_DATABASE_URL` | URL do banco de leitura do Simcc (`postgresql+psycopg://…/simcc`), usada pela fonte `simcc` | — |
+| `ODA_DATABASE_URL` | URL somente leitura do PostgreSQL do ODA (`postgresql+psycopg://oda_leitura:…@postgres:5432/oda_db`) | — |
+| `ODA_NETWORK` | Rede Docker externa compartilhada com o PostgreSQL do ODA | `maria_IA` |
 
 ---
 
@@ -360,7 +364,8 @@ O catálogo descreve os bancos de outros sistemas que a Maria vai consultar. Ele
 ```text
 catalog/fomento.yaml  ┐
 catalog/simcc.yaml    │
-catalog/concepts.yaml ┴─task seed────────┐
+catalog/oda.yaml      ├─task seed────────┐
+catalog/concepts.yaml ┘                  │
                                           ▼
 bancos de origem ──sincronizar──▶  catálogo (banco da Maria)  ◀── API / demo
                    (só leitura)           │
@@ -368,12 +373,15 @@ bancos de origem ──sincronizar──▶  catálogo (banco da Maria)  ◀─�
                                  prévia do contexto do modelo
 ```
 
-Há duas fontes:
+Há três fontes:
 
 | Fonte | Banco | Conteúdo |
 |---|---|---|
 | `fomento` | Banco do módulo de fomento (`FOMENTO_DATABASE_URL`) | Bolsas, projetos, bolsistas, instituições, áreas e territórios |
 | `simcc` | Banco de leitura do Simcc (`SIMCC_DATABASE_URL`) | Currículo Lattes: artigos, livros, capítulos, patentes, softwares, participação em eventos e projetos de pesquisa |
+| `oda` | Banco do ODA (`ODA_DATABASE_URL`) | Grupos de pesquisa SIMCC, instituição sede, pesquisadores, linhas de pesquisa e setores de aplicação |
+
+**Grupos do ODA no SIMCC.** A Maria aplica um recorte obrigatório: só consulta grupos cuja instituição vinculada como `SEDE` seja uma das 11 instituições do SIMCC. O mesmo escopo limita instituições, pesquisadores, linhas e setores associados a esses grupos. O filtro atua na árvore SQL validada, e entidades ODA fora da lista permitida são recusadas; não depende das instruções do modelo. Parceiras não são tratadas como sede. A conexão é somente leitura e não cria objetos no PostgreSQL do ODA.
 
 **Simcc.** As tabelas base do Simcc têm uma linha por pesquisador autor e servem para perguntas sobre pesquisadores. As views `mv_canonical_*` têm uma linha por produção, sem repetir coautores, e servem para totais. As instruções da fonte explicam isso ao modelo. Arrays, JSON, `tsvector` e campos internos do ETL do Simcc ficam ocultos. Nome, ORCID e resumo do currículo têm acesso `full`, por decisão do projeto: a Maria pode citar pesquisadores, inclusive ao relacionar com bolsistas do fomento. Para mudar isso, passe as colunas para `aggregate` ou oculte-as pela API ou pela demo. Um pesquisador pode ter várias instituições, ligadas por `researcher_institution`; o antigo `researcher.institution_id` fica fora do contexto, e as instruções orientam `COUNT(DISTINCT ...)` ao contar pesquisadores por instituição.
 

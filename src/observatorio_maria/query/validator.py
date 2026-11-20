@@ -22,6 +22,7 @@ from observatorio_maria.models import (
 )
 from observatorio_maria.query.errors import QueryValidationError
 from observatorio_maria.query.match_text import rewrite_match_text
+from observatorio_maria.query.row_scope import apply_oda_simcc_scope
 
 ALLOWED_FUNC_CLASSES = (
     exp.Count,
@@ -327,6 +328,7 @@ def validate_query(sql: str, schema: QuerySchema, max_rows: int = 100) -> str:
     _check_limit(stmt, max_rows)
 
     qualified = _qualify_query(stmt, schema)
+    qualified = apply_oda_simcc_scope(qualified, schema.datasource_id)
     all_sources: dict[str, Any] = {}
     for sc in traverse_scope(qualified):
         all_sources.update(sc.sources)
