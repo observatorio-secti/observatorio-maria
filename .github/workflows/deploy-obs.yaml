@@ -1,0 +1,67 @@
+name: CI/CD Pipeline - Observatório Maria
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+  pull_request:
+    branches: ["main", "develop"]
+
+env:
+  OTEL_SDK_DISABLED: "true"
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Instalar Poetry
+        run: pipx install poetry
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "poetry"
+
+      - name: Instalar Dependências
+        run: poetry install --no-interaction
+
+      - name: Rodar Testes
+        run: poetry run task test
+
+  deploy:
+    needs: tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOST_DNS }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -euo pipefail
+
+            # Caminho ajustado
+            cd /opt/observatorio/observatorio-maria
+
+            # Atualiza o código
+            git fetch origin main
+            git checkout -B main origin/main
+            git reset --hard origin/main
+            git clean -fd
+
+            # Constrói a imagem localmente e recria o container usando o compose.prod.yaml atual
+            docker compose -f compose.prod.yaml up -d --build --force-recreate maria-api
+
+            # Limpa imagens que ficaram órfãs (dangling) após o novo build
+            docker image prune -f
+
+            # Verifica o status
+            docker compose -f compose.prod.yaml ps
