@@ -1,6 +1,6 @@
 # 🚢 Deploy em produção
 
-A Maria roda no mesmo servidor do observatório de fomento e do Simcc sem alterar nada nos composes deles. Ela sobe em um projeto Docker Compose próprio (`compose.prod.yaml`) e só **lê** o banco do fomento e o banco de leitura do Simcc.
+A Maria roda no mesmo servidor do observatório de fomento, do Simcc e do ODA sem alterar os composes deles. Ela sobe em um projeto Docker Compose próprio (`compose.prod.yaml`) e só **lê** os bancos de origem.
 
 ## Como fica
 
@@ -22,6 +22,7 @@ A Maria roda no mesmo servidor do observatório de fomento e do Simcc sem altera
 - **Banco próprio sem servidor**: conversas e catálogo ficam num arquivo SQLite (`/app/data/maria.db`) no volume `maria_data`. Não há Postgres da Maria em produção.
 - **Nome distinto** (`maria-api`): na rede do fomento, `db` continua resolvendo para o Postgres do fomento; na rede do Simcc, `read_db` resolve para o banco de leitura.
 - **Acesso às origens**: a `maria-api` entra na rede do fomento e na `simcc-network` como `external` e consulta cada banco com um usuário somente leitura.
+- **Acesso ao ODA**: a `maria-api` também entra na rede externa `maria_IA`; o alias `postgres` aponta para o PostgreSQL ODA e a porta interna é `5432`.
 - **Porta**: a API fica em `11309` (configurável por `MARIA_API_PORT`).
 
 Ao iniciar, o container aplica as migrações (`alembic upgrade head`) e sobe o uvicorn na porta 8000 interna.
@@ -32,16 +33,16 @@ Ao iniciar, o container aplica as migrações (`alembic upgrade head`) e sobe o 
 |---|---|
 | `Dockerfile` | Imagem Python 3.13 com as dependências do `poetry.lock`, a extensão `postgres` do DuckDB (consultas entre fontes) e usuário sem privilégios de root |
 | `.dockerignore` | Mantém `.env`, `*.db`, `.venv`, testes etc. fora da imagem |
-| `compose.prod.yaml` | Serviço `maria-api`, volume `maria_data` com o SQLite e redes externas do fomento e do Simcc |
+| `compose.prod.yaml` | Serviço `maria-api`, volume `maria_data` com o SQLite e redes externas do fomento, Simcc e ODA |
 
 ## Passo a passo
 
 ### 1. Descobrir as redes
 
-O fomento e o Simcc precisam estar no ar. A rede do fomento costuma se chamar `<pasta-do-fomento>_default`. A do Simcc tem nome fixo, `simcc-network`, criada na instalação do Simcc com `docker network create simcc-network`:
+O fomento, o Simcc e o PostgreSQL do ODA precisam estar no ar. A rede do fomento costuma se chamar `<pasta-do-fomento>_default`. A do Simcc tem nome fixo, `simcc-network`; a rede do ODA é `maria_IA` e deve existir no mesmo host Docker:
 
 ```bash
-docker network ls | grep -E 'default|simcc-network'
+docker network ls | grep -E 'default|simcc-network|maria_IA'
 ```
 
 ### 2. Criar um usuário somente leitura no banco do fomento
@@ -113,6 +114,8 @@ Além das variáveis da [Configuração](../README.md#️-configuração), o dep
 | `FOMENTO_DATABASE_URL` | Conexão do usuário somente leitura, pelo host `db` | `postgresql+psycopg://maria_leitura:<senha>@db:5432/<POSTGRES_DB>` |
 | `SIMCC_NETWORK` | Rede do Simcc (passo 1). Só precisa ser definida se não for `simcc-network` | `simcc-network` (padrão) |
 | `SIMCC_DATABASE_URL` | Conexão do usuário somente leitura do Simcc (passo 3), pelo host `read_db` | `postgresql+psycopg://maria_leitura:<senha>@read_db:5432/simcc` |
+| `ODA_NETWORK` | Rede Docker externa do PostgreSQL ODA (passo 1) | `maria_IA` (padrão) |
+| `ODA_DATABASE_URL` | Conexão somente leitura do ODA, pelo alias `postgres` e porta interna `5432` | `postgresql+psycopg://oda_leitura:<senha>@postgres:5432/<POSTGRES_DB>` |
 | `ROOT_PATH` | Prefixo da API no proxy reverso, sem barra final (passo 7) | `/api-maria` |
 | `CORS_ORIGINS` | Origens dos fronts que chamam a API pelo navegador em outro domínio, separadas por vírgula. Dispensável quando o front e a API estão no mesmo domínio | `https://simcc.example.br` |
 
@@ -141,19 +144,20 @@ Só na primeira vez, ou com `--reset` para recriar as fontes a partir dos YAML:
 
 ```bash
 docker compose -f compose.prod.yaml exec maria-api \
-  python -m observatorio_maria.catalog.seed catalog/fomento.yaml catalog/simcc.yaml catalog/concepts.yaml
+  python -m observatorio_maria.catalog.seed catalog/fomento.yaml catalog/simcc.yaml catalog/oda.yaml catalog/concepts.yaml
 ```
 
 O `catalog/concepts.yaml` cria os conceitos que aparecem nas duas fontes (projetos, instituições e pesquisadores), com a política de resposta, e é aplicado depois das fontes.
 
-Depois do seed, **sincronize** as duas fontes. O seed cria as entidades como ausentes (`present: false`), e só a sincronização, que lê o schema real de cada banco, as marca como presentes. Sem esse passo, a Maria não recebe a ferramenta de consulta e responde que não tem acesso aos dados.
+Depois do seed, **sincronize** as três fontes. O seed cria as entidades como ausentes (`present: false`), e só a sincronização, que lê o schema real de cada banco, as marca como presentes. Sem esse passo, a Maria não recebe a ferramenta de consulta e responde que não tem acesso aos dados.
 
 ```bash
 curl -X POST http://localhost:11309/catalog/datasources/fomento/sync
 curl -X POST http://localhost:11309/catalog/datasources/simcc/sync
+curl -X POST http://localhost:11309/catalog/datasources/oda/sync
 ```
 
-A sincronização do Simcc também lê os valores das colunas categóricas (`SELECT DISTINCT` somente leitura) e pode levar mais tempo que a do fomento, porque as tabelas de produção são maiores.
+A sincronização do Simcc também lê os valores das colunas categóricas (`SELECT DISTINCT` somente leitura) e pode levar mais tempo que a do fomento, porque as tabelas de produção são maiores. A sincronização do ODA inspeciona o schema e os valores do catálogo; não cria nem altera objetos ou dados no banco ODA.
 
 ### Atualizar um catálogo que já existe
 
@@ -163,11 +167,11 @@ O seed não sobrescreve o que já está no catálogo. Quando um YAML de fonte mu
 
   ```bash
   docker compose -f compose.prod.yaml exec maria-api \
-    python -m observatorio_maria.catalog.seed --reset catalog/fomento.yaml catalog/simcc.yaml catalog/concepts.yaml
+    python -m observatorio_maria.catalog.seed --reset catalog/fomento.yaml catalog/simcc.yaml catalog/oda.yaml catalog/concepts.yaml
   ```
 
 - **Com edições feitas à mão:** rode o seed só com `catalog/concepts.yaml` (sem `--reset`), que cria os conceitos e vincula as entidades, e aplique o resto pela demo (aba "Catálogo de dados") ou pela API:
-  - os exemplos e as instruções de `fomento` e `simcc` (`PATCH /catalog/datasources/{id}` com `examples` e `instructions`, copiando dos YAML);
+  - os exemplos e as instruções de `fomento`, `simcc` e `oda` (`PATCH /catalog/datasources/{id}` com `examples` e `instructions`, copiando dos YAML);
   - no `simcc`, `researcher_institution` visível e consultável, com as colunas `researcher_id`, `institution_id`, `workload` e `identity_territory` visíveis (`PATCH /catalog/entities/{id}` e `PATCH /catalog/columns/{id}`);
   - `researcher.institution_id` oculta (`PATCH /catalog/columns/{id}` com `{"visible": false}`).
 
@@ -177,7 +181,7 @@ O seed não sobrescreve o que já está no catálogo. Quando um YAML de fonte mu
 
   Confira o resultado em `GET /catalog/concepts/context` e `GET /catalog/datasources/simcc/context`.
 
-Consultas entre fontes dependem da ligação pelo Lattes, criada pelo mesmo `catalog/concepts.yaml`. A ligação só vale com as duas colunas visíveis, e a imagem precisa ser reconstruída com `--build` para levar a extensão do DuckDB. Sem ligação ativa, a Maria simplesmente não recebe a ferramenta. As conexões do DuckDB usam os mesmos `FOMENTO_DATABASE_URL` e `SIMCC_DATABASE_URL`, com tempo limite no próprio Postgres.
+Consultas entre fontes dependem da ligação pelo Lattes, criada pelo mesmo `catalog/concepts.yaml`. A ligação só vale com as duas colunas visíveis, e a imagem precisa ser reconstruída com `--build` para levar a extensão do DuckDB. Sem ligação ativa, a Maria simplesmente não recebe a ferramenta. As conexões do DuckDB usam as URLs configuradas das fontes, com tempo limite no próprio Postgres.
 
 ### 7. Liberar a porta
 
@@ -222,7 +226,7 @@ docker volume rm observatorio-maria_maria_postgres_data
 
 ## A Maria diz que não tem acesso aos dados
 
-A ferramenta de consulta só é entregue ao modelo quando alguma fonte está ativa (`enabled`) e tem ao menos uma entidade visível, consultável e presente ao mesmo tempo. Cada fonte só entra no contexto do modelo quando cumpre essa condição. Verifique nesta ordem, com `FONTE` igual a `fomento` ou `simcc`:
+A ferramenta de consulta só é entregue ao modelo quando alguma fonte está ativa (`enabled`) e tem ao menos uma entidade visível, consultável e presente ao mesmo tempo. Cada fonte só entra no contexto do modelo quando cumpre essa condição. Verifique nesta ordem, com `FONTE` igual a `fomento`, `simcc` ou `oda`:
 
 ```bash
 API=http://localhost:11309
@@ -243,8 +247,8 @@ curl -s $API/catalog/datasources/$FONTE/context | jq -r .content
 |---|---|---|
 | Passo 1 dá 404 | Seed não rodou para essa fonte | Passo 6 do deploy |
 | Passo 2 devolve `[]` | Fonte nunca sincronizada | `POST /catalog/datasources/$FONTE/sync` |
-| Sync devolve 422 | `FOMENTO_DATABASE_URL` ou `SIMCC_DATABASE_URL` ausente no container | Conferir o `.env` e recriar com `up -d` |
-| Sync devolve 502 | Banco inacessível: rede, host (`db` no fomento, `read_db` no Simcc), usuário, senha ou nome do banco | `docker compose -f compose.prod.yaml logs maria-api` e os passos 2 e 3 do deploy |
+| Sync devolve 422 | URL da fonte (`FOMENTO_DATABASE_URL`, `SIMCC_DATABASE_URL` ou `ODA_DATABASE_URL`) ausente no container | Conferir o `.env` e recriar com `up -d` |
+| Sync devolve 502 | Banco inacessível: rede, host (`db`, `read_db` ou `postgres`), usuário, senha ou nome do banco | `docker compose -f compose.prod.yaml logs maria-api` e os passos de conexão do deploy |
 | `schema_status: error` | A verificação ao iniciar não conectou à origem | Mesma causa do 502 |
 
 Depois de corrigir, teste em uma **conversa nova**: o histórico da conversa anterior, com a recusa, vai para o modelo e pode induzir a mesma resposta.
