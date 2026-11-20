@@ -80,42 +80,34 @@ def _eligible_line(alias: str) -> str:
 
 def _policy(table_name: str) -> str | None:
     group = _eligible_group('scope_group')
-    if table_name == 'instituicao':
-        return _institution_filter('_scope')
-    if table_name == 'grupo_pesquisa':
-        return _eligible_group('_scope')
-    if table_name == 'grupo_pesquisa_instituicao':
-        return (
+    policies = {
+        'instituicao': _institution_filter('_scope'),
+        'grupo_pesquisa': _eligible_group('_scope'),
+        'grupo_pesquisa_instituicao': (
             "_scope.tipo_relacao = 'SEDE' AND "
             '_scope.instituicao_id IN ('
             'SELECT scope_inst.id FROM public.instituicao AS scope_inst '
             f'WHERE {_institution_filter("scope_inst")})'
-        )
-    if table_name == 'membro_grupo':
-        return (
+        ),
+        'membro_grupo': (
             'EXISTS (SELECT 1 FROM public.grupo_pesquisa AS scope_group '
             f'WHERE scope_group.id = _scope.grupo_id AND {group})'
-        )
-    if table_name == 'pesquisador':
-        return (
+        ),
+        'pesquisador': (
             'EXISTS (SELECT 1 FROM public.membro_grupo AS scope_member '
             'JOIN public.grupo_pesquisa AS scope_group '
             'ON scope_group.id = scope_member.grupo_id '
             'WHERE scope_member.pesquisador_id = _scope.id '
             f'AND {group})'
-        )
-    if table_name == 'linha_pesquisa':
-        return (
+        ),
+        'linha_pesquisa': (
             'EXISTS (SELECT 1 FROM public.grupo_pesquisa AS scope_group '
             'WHERE scope_group.id = _scope.grupo_id '
             f'AND {group})'
-        )
-    if table_name == 'membro_linha_pesquisa':
-        return _eligible_line('_scope')
-    if table_name == 'linha_pesquisa_setor_aplicacao':
-        return _eligible_line('_scope')
-    if table_name == 'setor_aplicacao':
-        return (
+        ),
+        'membro_linha_pesquisa': _eligible_line('_scope'),
+        'linha_pesquisa_setor_aplicacao': _eligible_line('_scope'),
+        'setor_aplicacao': (
             'EXISTS ('
             'SELECT 1 FROM public.linha_pesquisa_setor_aplicacao AS scope_map '
             'JOIN public.linha_pesquisa AS scope_line '
@@ -125,8 +117,9 @@ def _policy(table_name: str) -> str | None:
             'WHERE scope_map.setor_aplicacao_id = _scope.id '
             f'AND {_eligible_group("scope_group")}'
             ')'
-        )
-    return None
+        ),
+    }
+    return policies.get(table_name)
 
 
 def _predicate_expression(predicate: str, alias: str) -> exp.Expression:

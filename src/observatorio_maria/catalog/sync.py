@@ -21,7 +21,6 @@ from observatorio_maria.catalog.introspection import (
     introspect,
     resolve_connection_url,
 )
-from observatorio_maria.catalog.observed import refresh_observed_values
 from observatorio_maria.database import SessionLocal
 from observatorio_maria.models import (
     CatalogColumn,
@@ -192,6 +191,11 @@ async def sync_datasource(
 
 async def sync_all(datasource_ids: list[str] | None = None) -> int:
     """Sincroniza as fontes informadas ou todas as fontes ativas."""
+    # Import local evita ciclo com `observed`, que usa `load_entities`.
+    from observatorio_maria.catalog.observed import (  # noqa: PLC0415
+        refresh_observed_values,
+    )
+
     Settings().export_environment()
     async with SessionLocal() as session:
         stmt = select(CatalogDataSource.id).order_by(CatalogDataSource.id)

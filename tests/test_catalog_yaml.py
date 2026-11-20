@@ -291,6 +291,9 @@ SIMCC_SEARCHABLE = {
     ('mv_canonical_events', 'event_name'),
     ('mv_canonical_research_projects', 'title'),
     ('mv_canonical_research_projects', 'description'),
+    ('foment', 'modality_name'),
+    ('foment', 'call_title'),
+    ('foment', 'funding_program_name'),
 }
 
 # Arrays, JSON, tsvector, URLs e campos internos do ETL do Simcc.
@@ -374,7 +377,8 @@ def test_simcc_seed_lists_no_technical_columns():
         for entity, column in simcc_columns()
         if entity == 'bibliographic_production' and column.name == 'year'
     ]
-    # `year` é coluna obsoleta em graduate_program_researcher; deve entrar oculta.
+    # `year` é coluna obsoleta em graduate_program_researcher;
+    # deve entrar oculta.
     obsolete_gpr_year = [
         column.name
         for entity, column in simcc_columns()
