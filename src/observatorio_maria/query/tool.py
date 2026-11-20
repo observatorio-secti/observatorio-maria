@@ -1045,6 +1045,16 @@ class QueryRunner:
         self.pending_blocks.append(mask_value(table_block))
         return {'status': 'ok', 'block_index': len(self.pending_blocks)}
 
+    def _show_oda_researchers(self, result: QueryResult, title):
+        columns = [
+            c for c in result.columns
+            if (c != 'id' and not c.endswith('_id')) or c == 'lattes_id'
+        ]
+        if not columns:
+            return {'error': 'Inclua o nome do pesquisador na consulta ODA.'}
+        # Os UUIDs ODA não identificam registros da fonte Simcc.
+        return self.show_table(result.result_id, columns, title)
+
     async def show_researchers(
         self,
         result_id: str,
@@ -1052,6 +1062,9 @@ class QueryRunner:
         id_column: str | None = None,
     ) -> dict[str, Any]:
         """Gera cards de pesquisadores a partir de um resultado prévio."""
+        previous = self.result_store.get(result_id)
+        if previous is not None and previous.source == 'oda':
+            return self._show_oda_researchers(previous, title)
         result, raw_ids, err = _prepare_card_hydration(
             self.result_store,
             result_id,

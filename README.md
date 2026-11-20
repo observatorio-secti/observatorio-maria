@@ -100,6 +100,7 @@ catalog/            ← introspecção somente leitura → banco de origem (ex.:
 │   ├── query/                       # Ferramentas do agente sobre as fontes
 │   │   ├── validator.py · execution.py  # Validação do SQL e execução somente leitura
 │   │   ├── row_scope.py              # Escopo obrigatório dos grupos ODA/SIMCC
+│   │   ├── oda_validation.py         # Enums e busca textual da fonte ODA
 │   │   ├── federation.py · federated_validator.py  # Consultas entre fontes (DuckDB)
 │   │   ├── match_text.py · sanitization.py  # MATCH_TEXT, quarentena e mascaramento
 │   │   ├── cards.py                 # Hidratação dos cards de pesquisadores e produções
@@ -382,6 +383,8 @@ Há três fontes:
 | `oda` | Banco do ODA (`ODA_DATABASE_URL`) | Grupos de pesquisa SIMCC, instituição sede, pesquisadores, linhas de pesquisa e setores de aplicação |
 
 **Grupos do ODA no SIMCC.** A Maria aplica um recorte obrigatório: só consulta grupos cuja instituição vinculada como `SEDE` seja uma das 11 instituições do SIMCC. O mesmo escopo limita instituições, pesquisadores, linhas e setores associados a esses grupos. O filtro atua na árvore SQL validada, e entidades ODA fora da lista permitida são recusadas; não depende das instruções do modelo. Parceiras não são tratadas como sede. A conexão é somente leitura e não cria objetos no PostgreSQL do ODA.
+
+O critério institucional segue `shared/database/src/simcc.ts` do ODA: siglas SIMCC, prefixo `IFBA -` para campi e FIOCRUZ com `Moniz` no nome. Não há correspondência ampla pelo nome da universidade. A busca textual resolve aliases e CTEs antes de incluir filtros; os rótulos de enum são verificados pelos metadados sincronizados (ex.: `sede`, não `SEDE`). As categorias observadas também são lidas com o escopo SIMCC; falhas descartam valores ODA antigos. Consultas ODA entre fontes ficam bloqueadas até terem a mesma proteção. Pesquisadores ODA são apresentados em tabela a partir do resultado consultado, sem hidratação no Simcc. Conte grupos e pessoas por IDs distintos após junções.
 
 **Simcc.** As tabelas base do Simcc têm uma linha por pesquisador autor e servem para perguntas sobre pesquisadores. As views `mv_canonical_*` têm uma linha por produção, sem repetir coautores, e servem para totais. As instruções da fonte explicam isso ao modelo. Arrays, JSON, `tsvector` e campos internos do ETL do Simcc ficam ocultos. Nome, ORCID e resumo do currículo têm acesso `full`, por decisão do projeto: a Maria pode citar pesquisadores, inclusive ao relacionar com bolsistas do fomento. Para mudar isso, passe as colunas para `aggregate` ou oculte-as pela API ou pela demo. Um pesquisador pode ter várias instituições, ligadas por `researcher_institution`; o antigo `researcher.institution_id` fica fora do contexto, e as instruções orientam `COUNT(DISTINCT ...)` ao contar pesquisadores por instituição.
 

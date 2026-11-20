@@ -22,6 +22,7 @@ from observatorio_maria.models import (
 )
 from observatorio_maria.query.errors import QueryValidationError
 from observatorio_maria.query.match_text import rewrite_match_text
+from observatorio_maria.query.oda_validation import prepare_oda_query
 from observatorio_maria.query.row_scope import apply_oda_simcc_scope
 
 ALLOWED_FUNC_CLASSES = (
@@ -77,6 +78,9 @@ class QuerySchema:
     reference_only_tables: set[str] = field(default_factory=set)
     aggregate_columns: set[tuple[str, str]] = field(default_factory=set)
     searchable_columns: set[tuple[str, str]] = field(default_factory=set)
+    enum_values: dict[tuple[str, str], tuple[str, ...]] = field(
+        default_factory=dict
+    )
 
 
 def source_dialect(datasource: CatalogDataSource) -> str:
@@ -99,6 +103,7 @@ def build_query_schema(
     reference_only_tables: set[str] = set()
     aggregate_columns: set[tuple[str, str]] = set()
     searchable_columns: set[tuple[str, str]] = set()
+    enum_values: dict[tuple[str, str], tuple[str, ...]] = {}
 
     for entity in entities:
         if not entity.visible or not entity.present:
@@ -126,6 +131,8 @@ def build_query_schema(
 
             c_name = col.name.lower()
             cols_dict[c_name] = col.data_type or 'text'
+            if datasource.id == 'oda' and col.enum_values is not None:
+                enum_values[(name_lower, c_name)] = tuple(col.enum_values)
 
             if col.access == ColumnAccess.AGGREGATE:
                 aggregate_columns.add((name_lower, c_name))
@@ -146,6 +153,7 @@ def build_query_schema(
         reference_only_tables=reference_only_tables,
         aggregate_columns=aggregate_columns,
         searchable_columns=searchable_columns,
+        enum_values=enum_values,
     )
 
 
@@ -328,7 +336,8 @@ def validate_query(sql: str, schema: QuerySchema, max_rows: int = 100) -> str:
     _check_limit(stmt, max_rows)
 
     qualified = _qualify_query(stmt, schema)
-    qualified = apply_oda_simcc_scope(qualified, schema.datasource_id)
+    if schema.datasource_id == 'oda':
+        prepare_oda_query(qualified, schema)
     all_sources: dict[str, Any] = {}
     for sc in traverse_scope(qualified):
         all_sources.update(sc.sources)
@@ -349,4 +358,5 @@ def validate_query(sql: str, schema: QuerySchema, max_rows: int = 100) -> str:
         datasource_id=schema.datasource_id,
     )
 
+    qualified = apply_oda_simcc_scope(qualified, schema.datasource_id)
     return qualified.sql(dialect=schema.dialect)

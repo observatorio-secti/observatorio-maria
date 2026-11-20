@@ -404,6 +404,12 @@ def validate_federated_query(
         raise QueryValidationError(f'Erro de sintaxe SQL: {exc}') from exc
 
     stmt = _check_statement(statements)
+    if any(t.catalog.lower() == 'oda' for t in stmt.find_all(exp.Table)):
+        raise QueryValidationError(
+            'A fonte ODA aceita apenas consultas individuais com query_data. '
+            'Consultas entre fontes estão bloqueadas para preservar '
+            'o recorte SIMCC.'
+        )
     _check_functions(stmt)
     cited = _check_tables(stmt, schema)
     _check_source_count(cited)
