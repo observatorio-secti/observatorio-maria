@@ -10,6 +10,7 @@ name: observatorio-maria
 services:
   maria-api:
     build: .
+    entrypoint: ["/app/entrypoint.sh"]
     env_file: .env
     environment:
       DATABASE_URL: sqlite+aiosqlite:////app/data/maria.db
