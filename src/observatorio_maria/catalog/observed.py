@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+import sqlglot
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
@@ -28,6 +29,7 @@ from observatorio_maria.models import (
     CatalogEntity,
     ColumnAccess,
 )
+from observatorio_maria.query.row_scope import apply_oda_simcc_scope
 from observatorio_maria.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,10 @@ async def _read_distinct(
         f'{quote(entity.name)} WHERE {name} IS NOT NULL '
         f'LIMIT {max_values + 1}'
     )
+    if entity.datasource_id == 'oda':
+        sql = apply_oda_simcc_scope(
+            sqlglot.parse_one(sql, read='postgres'), 'oda'
+        ).sql(dialect='postgres')
     postgres = connection.dialect.name == 'postgresql'
     async with asyncio.timeout(timeout_seconds), connection.begin():
         if postgres:
@@ -112,6 +118,9 @@ async def _read_columns(
                 )
                 report.read_columns.append(label)
             except (SQLAlchemyError, TimeoutError):
+                if entity.datasource_id == 'oda':
+                    # Não reutilizar categorias antigas sem escopo SIMCC.
+                    column.observed_values = None
                 report.failed_columns.append(label)
 
 

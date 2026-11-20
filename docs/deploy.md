@@ -161,6 +161,12 @@ A sincronização do Simcc também lê os valores das colunas categóricas (`SEL
 
 ### Atualizar um catálogo que já existe
 
+Para atualizar a integração ODA, reconstrua e recrie `maria-api` com o código atual. Reiniciar o container antigo não atualiza os arquivos da imagem. A alteração do código é independente dos dados persistidos em `maria_data`.
+
+Depois, atualize somente `instructions` e `examples` de `oda` com `PATCH /catalog/datasources/oda`, usando os valores de `catalog/oda.yaml`, e execute `POST /catalog/datasources/oda/sync` para reler enums e categorias dentro do recorte. O seed preserva valores já cadastrados: reexecutá-lo não atualiza instruções ou exemplos existentes. Evite `--reset` quando houver edições manuais. A fonte deve manter o ID `oda` para que as proteções específicas sejam aplicadas.
+
+Os enums SQL do ODA usam rótulos como `sede`, `certificado`, `pesquisador` e `doutorado`. O filtro aceita os campi `IFBA -...` e restringe FIOCRUZ a `Moniz`, conforme a API ODA. Consultas ODA entre fontes ficam bloqueadas. A apresentação de pesquisadores ODA usa tabelas com os dados consultados e não depende da fonte Simcc.
+
 O seed não sobrescreve o que já está no catálogo. Quando um YAML de fonte muda, como na troca dos exemplos few-shot e na entrada de `researcher_institution` no Simcc (issue #2), um catálogo já semeado precisa receber a mudança de outra forma:
 
 - **Sem edições feitas à mão** nas fontes: recrie tudo a partir dos arquivos e sincronize de novo, como no passo 6.

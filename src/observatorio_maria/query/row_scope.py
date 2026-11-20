@@ -17,50 +17,31 @@ SIMCC_INSTITUTION_ACRONYMS = (
     'UFRB',
     'UNEB',
     'IFBA',
-    'FIOCRUZ',
 )
 
 _ACRONYMS_SQL = ', '.join(
     f"'{acronym}'" for acronym in SIMCC_INSTITUTION_ACRONYMS
 )
-_INSTITUTION_NAMES_SQL = ', '.join(
-    f"'%{name}%'"
-    for name in (
-        'Universidade Federal da Bahia',
-        'Escola Bahiana de Medicina e Saúde Pública',
-        'Escola Bahiana de Medicina e Saude Publica',
-        'Universidade Estadual do Sudoeste da Bahia',
-        'Universidade Federal do Oeste da Bahia',
-        'Universidade Federal do Sul da Bahia',
-        'Universidade Estadual de Feira de Santana',
-        'Universidade Estadual de Santa Cruz',
-        'Universidade Federal do Recôncavo da Bahia',
-        'Universidade Federal do Reconcavo da Bahia',
-        'Universidade do Estado da Bahia',
-        'Instituto Federal da Bahia',
-        'Fundação Oswaldo Cruz',
-        'Fundacao Oswaldo Cruz',
-        'Instituto Gonçalo Moniz',
-        'Instituto Goncalo Moniz',
-    )
-)
 
 
 def _institution_filter(alias: str) -> str:
+    # Mesmo critério de shared/database/src/simcc.ts no ODA.
     return (
-        f'UPPER({alias}.sigla) IN ({_ACRONYMS_SQL}) OR '
-        f'{alias}.nome ILIKE ANY (ARRAY[{_INSTITUTION_NAMES_SQL}])'
+        f'{alias}.sigla IN ({_ACRONYMS_SQL}) OR '
+        f"{alias}.sigla ILIKE 'IFBA -%' OR "
+        f"({alias}.sigla = 'FIOCRUZ' AND {alias}.nome ILIKE '%Moniz%')"
     )
 
 
 def _eligible_group(alias: str) -> str:
+    # PostgreSQL guarda o valor mapeado pelo Prisma: `sede`, não `SEDE`.
     return (
         'EXISTS ('
         'SELECT 1 FROM public.grupo_pesquisa_instituicao AS scope_gpi '
         'JOIN public.instituicao AS scope_inst '
         'ON scope_inst.id = scope_gpi.instituicao_id '
         f'WHERE scope_gpi.grupo_id = {alias}.id '
-        "AND scope_gpi.tipo_relacao = 'SEDE' "
+        "AND scope_gpi.tipo_relacao = 'sede' "
         f'AND ({_institution_filter("scope_inst")})'
         ')'
     )
@@ -78,7 +59,7 @@ def _eligible_line(alias: str) -> str:
     )
 
 
-def _policy(table_name: str) -> str | None:
+def _policy(table_name: str) -> str | None:  # noqa: PLR0911
     group = _eligible_group('scope_group')
     if table_name == 'instituicao':
         return _institution_filter('_scope')
@@ -86,7 +67,7 @@ def _policy(table_name: str) -> str | None:
         return _eligible_group('_scope')
     if table_name == 'grupo_pesquisa_instituicao':
         return (
-            "_scope.tipo_relacao = 'SEDE' AND "
+            "_scope.tipo_relacao = 'sede' AND "
             '_scope.instituicao_id IN ('
             'SELECT scope_inst.id FROM public.instituicao AS scope_inst '
             f'WHERE {_institution_filter("scope_inst")})'
@@ -129,18 +110,9 @@ def _policy(table_name: str) -> str | None:
     return None
 
 
-def _predicate_expression(predicate: str, alias: str) -> exp.Expression:
-    parsed = sqlglot.parse_one(
-        f'SELECT 1 WHERE {predicate}', read='postgres'
-    )
-    where = parsed.args.get('where')
-    if where is None:
-        raise ValueError('Política de linhas sem predicado')
-    expression = where.this
-    for column in expression.find_all(exp.Column):
-        if column.table == '_scope':
-            column.set('table', exp.to_identifier(alias))
-    return expression
+def _predicate_expression(predicate: str) -> exp.Expression:
+    parsed = sqlglot.parse_one(f'SELECT 1 WHERE {predicate}', read='postgres')
+    return parsed.args['where'].this
 
 
 def apply_oda_simcc_scope(
@@ -156,7 +128,7 @@ def apply_oda_simcc_scope(
 
     scopes = list(traverse_scope(statement))
     for scope in scopes:
-        for table_alias, source in scope.sources.items():
+        for table_alias, (_, source) in scope.selected_sources.items():
             if not isinstance(source, exp.Table):
                 continue
             predicate_sql = _policy(source.name.lower())
@@ -166,7 +138,7 @@ def apply_oda_simcc_scope(
                     'na fonte ODA/SIMCC.'
                 )
 
-            predicate = _predicate_expression(predicate_sql, table_alias)
+            predicate = _predicate_expression(predicate_sql)
             original_alias = source.args.get('alias')
             if original_alias is None:
                 for column in scope.expression.find_all(exp.Column):
@@ -179,13 +151,11 @@ def apply_oda_simcc_scope(
                         column.set('table', exp.to_identifier(table_alias))
 
             inner_table = source.copy()
-            if original_alias is None:
-                inner_alias = exp.TableAlias(
-                    this=exp.to_identifier(table_alias)
-                )
-            else:
-                inner_alias = original_alias.copy()
-            inner_table.set('alias', inner_alias.copy())
+            # O alias do cliente só existe fora da subconsulta filtrada.
+            # Assim ele nunca captura as referências internas da política.
+            inner_table.set(
+                'alias', exp.TableAlias(this=exp.to_identifier('_scope'))
+            )
 
             scoped_select = exp.Select(
                 expressions=[exp.Star()],
@@ -197,8 +167,6 @@ def apply_oda_simcc_scope(
                 if original_alias is not None
                 else exp.TableAlias(this=exp.to_identifier(table_alias))
             )
-            source.replace(
-                exp.Subquery(this=scoped_select, alias=outer_alias)
-            )
+            source.replace(exp.Subquery(this=scoped_select, alias=outer_alias))
 
     return statement

@@ -10,6 +10,11 @@ datasource:
   connection_env: ODA_DATABASE_URL
   schemas: [public]
   instructions: |
+    - O recorte usa o mesmo critério da API ODA: siglas das instituições SIMCC, campi com sigla iniciada em `IFBA -` e FIOCRUZ somente quando o nome contém `Moniz`. Não associe instituições apenas por semelhança de nome.
+    - Em SQL use os rótulos físicos dos enums: `sede`, `parceira`, `certificado`, `pesquisador`, `doutorado` etc., conforme os valores do catálogo; não use os nomes maiúsculos do Prisma.
+    - Consulte esta fonte somente por `query_data`; a integração ODA com consultas entre fontes está bloqueada para preservar o recorte SIMCC.
+    - Apresente os pesquisadores ODA com `show_table`, incluindo nome e Lattes quando disponível. UUIDs ODA não identificam os registros do Simcc.
+    - Conte grupos com `COUNT(DISTINCT gp.id)` e pessoas com `COUNT(DISTINCT p.id)`: junções com instituições, membros, linhas ou setores podem repetir registros. A soma de membros de vários grupos não é o total de pessoas distintas.
     - Esta fonte contém somente grupos cuja relação institucional do tipo SEDE aponta para uma das 11 instituições do SIMCC. A aplicação também impõe esse recorte em cada consulta; não remova nem tente contornar o filtro.
     - Use `grupo_pesquisa` para informações do grupo. `grupo_pesquisa_instituicao` retorna somente a instituição sede SIMCC do grupo. Não conte instituições parceiras como sede.
     - Para listar os pesquisadores de um grupo, junte `membro_grupo` a `pesquisador` por `pesquisador_id` e filtre o grupo pelo `dgp_id` ou nome. `membro_grupo.e_lider` indica liderança.
@@ -19,7 +24,7 @@ datasource:
   examples:
     - question: "Quais grupos SIMCC estão vinculados à UNEB?"
       sql: >-
-        SELECT gp.nome, gp.dgp_id, gp.situacao FROM public.grupo_pesquisa gp JOIN public.grupo_pesquisa_instituicao gpi ON gpi.grupo_id = gp.id JOIN public.instituicao i ON i.id = gpi.instituicao_id WHERE i.sigla = 'UNEB' AND gpi.tipo_relacao = 'SEDE' ORDER BY gp.nome
+        SELECT gp.nome, gp.dgp_id, gp.situacao FROM public.grupo_pesquisa gp JOIN public.grupo_pesquisa_instituicao gpi ON gpi.grupo_id = gp.id JOIN public.instituicao i ON i.id = gpi.instituicao_id WHERE i.sigla = 'UNEB' AND gpi.tipo_relacao = 'sede' ORDER BY gp.nome
     - question: "Quem são os pesquisadores do grupo de DGP 123456?"
       sql: >-
         SELECT p.nome, p.lattes_id, mg.e_lider FROM public.grupo_pesquisa gp JOIN public.membro_grupo mg ON mg.grupo_id = gp.id JOIN public.pesquisador p ON p.id = mg.pesquisador_id WHERE gp.dgp_id = '123456' ORDER BY p.nome
