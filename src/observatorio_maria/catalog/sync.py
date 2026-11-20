@@ -5,13 +5,23 @@ entra oculto e não consultável; o que sumiu fica ausente com a configuração
 intacta. Relacionamentos manuais (declarados no YAML) nunca ficam ausentes.
 """
 
+import argparse
+import asyncio
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from observatorio_maria.catalog.introspection import SchemaSnapshot
+from observatorio_maria.catalog.introspection import (
+    ConnectionNotConfiguredError,
+    SchemaSnapshot,
+    SourceUnavailableError,
+    introspect,
+    resolve_connection_url,
+)
+from observatorio_maria.database import SessionLocal
 from observatorio_maria.models import (
     CatalogColumn,
     CatalogDataSource,
@@ -21,6 +31,7 @@ from observatorio_maria.models import (
     SchemaStatus,
     utcnow,
 )
+from observatorio_maria.settings import Settings
 
 
 @dataclass
@@ -176,3 +187,65 @@ async def sync_datasource(
     datasource.check_error = None
     await session.commit()
     return report
+
+
+async def sync_all(datasource_ids: list[str] | None = None) -> int:
+    """Sincroniza as fontes informadas ou todas as fontes ativas."""
+    # Import local evita ciclo com `observed`, que usa `load_entities`.
+    from observatorio_maria.catalog.observed import (  # noqa: PLC0415
+        refresh_observed_values,
+    )
+
+    Settings().export_environment()
+    async with SessionLocal() as session:
+        stmt = select(CatalogDataSource.id).order_by(CatalogDataSource.id)
+        if datasource_ids:
+            stmt = stmt.where(CatalogDataSource.id.in_(datasource_ids))
+        else:
+            stmt = stmt.where(CatalogDataSource.enabled)
+        ids = list((await session.scalars(stmt)).all())
+
+    if not ids:
+        print('Nenhuma fonte ativa para sincronizar.')
+        return 0
+
+    for datasource_id in ids:
+        try:
+            async with SessionLocal() as session:
+                datasource = await session.get(
+                    CatalogDataSource, datasource_id
+                )
+                if datasource is None:
+                    continue
+                url = resolve_connection_url(datasource.connection_env)
+                snapshot = await introspect(url, datasource.schemas)
+                report = await sync_datasource(session, datasource, snapshot)
+                await refresh_observed_values(session, datasource)
+                print(
+                    f'{datasource.id}: sincronizada '
+                    f'(+{len(report.added_entities)} entidade(s), '
+                    f'+{len(report.added_columns)} coluna(s))'
+                )
+        except (ConnectionNotConfiguredError, SourceUnavailableError) as exc:
+            print(
+                f'{datasource_id}: aviso: {exc}',
+                file=sys.stderr,
+            )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description='Sincroniza o catálogo com os bancos de origem.'
+    )
+    parser.add_argument(
+        'datasources',
+        nargs='*',
+        help='IDs das fontes (padrão: todas as fontes ativas)',
+    )
+    args = parser.parse_args(argv)
+    return asyncio.run(sync_all(args.datasources or None))
+
+
+if __name__ == '__main__':
+    sys.exit(main())

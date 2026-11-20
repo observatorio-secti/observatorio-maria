@@ -269,6 +269,9 @@ def test_fomento_seed_has_no_guessed_modalidade_values():
 SIMCC_SEARCHABLE = {
     ('researcher', 'name'),
     ('researcher_institution', 'identity_territory'),
+    ('graduate_program', 'name'),
+    ('graduate_program', 'acronym'),
+    ('graduate_program', 'area'),
     ('researcher', 'abstract'),
     ('bibliographic_production', 'title'),
     ('patent', 'title'),
@@ -288,6 +291,9 @@ SIMCC_SEARCHABLE = {
     ('mv_canonical_events', 'event_name'),
     ('mv_canonical_research_projects', 'title'),
     ('mv_canonical_research_projects', 'description'),
+    ('foment', 'modality_name'),
+    ('foment', 'call_title'),
+    ('foment', 'funding_program_name'),
 }
 
 # Arrays, JSON, tsvector, URLs e campos internos do ETL do Simcc.
@@ -371,9 +377,17 @@ def test_simcc_seed_lists_no_technical_columns():
         for entity, column in simcc_columns()
         if entity == 'bibliographic_production' and column.name == 'year'
     ]
+    # `year` é coluna obsoleta em graduate_program_researcher;
+    # deve entrar oculta.
+    obsolete_gpr_year = [
+        column.name
+        for entity, column in simcc_columns()
+        if entity == 'graduate_program_researcher' and column.name == 'year'
+    ]
 
     assert listed & SIMCC_TECHNICAL_COLUMNS == set()
     assert text_year == []
+    assert obsolete_gpr_year == []
 
 
 async def test_simcc_seed_examples_pass_catalog_rules(session):
@@ -514,3 +528,22 @@ def test_seeds_mark_non_category_columns():
         'nome',
         'nome_normalizado',
     }
+
+
+def test_simcc_seed_exposes_foment_productivity_fellows():
+    document = load_catalog_file(Path('catalog/simcc.yaml'))
+    entities = {e.name: e for e in document.entities}
+
+    assert 'foment' in entities
+    foment = entities['foment']
+    assert 'bolsista de produtividade' in foment.synonyms
+    assert 'PQ' in foment.synonyms
+    columns = {c.name for c in foment.columns}
+    assert {
+        'id',
+        'researcher_id',
+        'modality_code',
+        'modality_name',
+        'category_level_code',
+    } <= columns
+    assert 'sequence_code' not in columns

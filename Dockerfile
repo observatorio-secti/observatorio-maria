@@ -20,10 +20,12 @@ RUN poetry install --only main
 COPY alembic.ini ./
 COPY migrations ./migrations
 COPY catalog ./catalog
+COPY entrypoint.sh ./
 
 # /app/data recebe o volume do banco SQLite; o volume novo herda o dono.
 RUN useradd --create-home --uid 1000 maria \
     && mkdir -p /app/data \
+    && chmod +x /app/entrypoint.sh \
     && chown -R maria /app
 USER maria
 
@@ -33,5 +35,4 @@ RUN python -c "import duckdb; duckdb.connect().install_extension('postgres')"
 
 EXPOSE 8000
 
-# Aplica as migrações antes de subir a API.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn observatorio_maria.app:app --host 0.0.0.0 --port 8000 --proxy-headers"]
+CMD ["uvicorn", "observatorio_maria.app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
