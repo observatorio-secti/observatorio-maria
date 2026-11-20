@@ -2,9 +2,8 @@
 #   docker compose -f compose.prod.yaml up -d --build
 #
 # Projeto e volume próprios. Conversas e catálogo ficam num arquivo SQLite no
-# volume maria_data. A API só entra nas redes do fomento e do Simcc para ler os
-# bancos deles (FOMENTO_DATABASE_URL no host "db" e SIMCC_DATABASE_URL no host
-# "read_db").
+# volume maria_data. A API entra nas redes externas das fontes para consultas
+# com credenciais somente leitura.
 name: observatorio-maria
 
 services:
@@ -19,7 +18,7 @@ services:
       - maria_data:/app/data
     ports:
       - "${MARIA_API_PORT:-11309}:8000"
-    networks: [fomento, simcc]
+    networks: [fomento, simcc, oda]
     restart: unless-stopped
 
 networks:
@@ -29,6 +28,9 @@ networks:
   simcc:
     external: true
     name: ${SIMCC_NETWORK:-simcc-network}
+  oda:
+    external: true
+    name: ${ODA_NETWORK:-maria_IA}
 
 volumes:
   maria_data:

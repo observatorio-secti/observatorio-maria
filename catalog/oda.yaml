@@ -1,0 +1,179 @@
+# Catálogo dos grupos de pesquisa do ODA vinculados às instituições SIMCC.
+# O banco ODA é consultado com credenciais somente leitura.
+
+datasource:
+  id: oda
+  name: Grupos de pesquisa (ODA · SIMCC)
+  description: >-
+    Grupos de pesquisa cuja instituição sede pertence às 11 instituições do
+    SIMCC, seus pesquisadores, linhas de pesquisa e setores de aplicação.
+  connection_env: ODA_DATABASE_URL
+  schemas: [public]
+  instructions: |
+    - Esta fonte contém somente grupos cuja relação institucional do tipo SEDE aponta para uma das 11 instituições do SIMCC. A aplicação também impõe esse recorte em cada consulta; não remova nem tente contornar o filtro.
+    - Use `grupo_pesquisa` para informações do grupo. `grupo_pesquisa_instituicao` retorna somente a instituição sede SIMCC do grupo. Não conte instituições parceiras como sede.
+    - Para listar os pesquisadores de um grupo, junte `membro_grupo` a `pesquisador` por `pesquisador_id` e filtre o grupo pelo `dgp_id` ou nome. `membro_grupo.e_lider` indica liderança.
+    - Para linhas de pesquisa, junte `linha_pesquisa` pelo `grupo_id`. Para setores de aplicação, junte `linha_pesquisa_setor_aplicacao` a `setor_aplicacao`; os setores são ligados às linhas, não diretamente ao grupo.
+    - IDs internos são UUIDs: use-os apenas em junções. `dgp_id` e `lattes_id` são identificadores de origem e podem ser apresentados quando úteis.
+    - A área predominante é o texto coletado do DGP; não a trate como uma taxonomia validada.
+  examples:
+    - question: "Quais grupos SIMCC estão vinculados à UNEB?"
+      sql: >-
+        SELECT gp.nome, gp.dgp_id, gp.situacao FROM public.grupo_pesquisa gp JOIN public.grupo_pesquisa_instituicao gpi ON gpi.grupo_id = gp.id JOIN public.instituicao i ON i.id = gpi.instituicao_id WHERE i.sigla = 'UNEB' AND gpi.tipo_relacao = 'SEDE' ORDER BY gp.nome
+    - question: "Quem são os pesquisadores do grupo de DGP 123456?"
+      sql: >-
+        SELECT p.nome, p.lattes_id, mg.e_lider FROM public.grupo_pesquisa gp JOIN public.membro_grupo mg ON mg.grupo_id = gp.id JOIN public.pesquisador p ON p.id = mg.pesquisador_id WHERE gp.dgp_id = '123456' ORDER BY p.nome
+    - question: "Quais setores de aplicação aparecem nas linhas do grupo de DGP 123456?"
+      sql: >-
+        SELECT DISTINCT lp.titulo AS linha, sa.nome AS setor FROM public.grupo_pesquisa gp JOIN public.linha_pesquisa lp ON lp.grupo_id = gp.id JOIN public.linha_pesquisa_setor_aplicacao lpsa ON lpsa.linha_pesquisa_id = lp.id JOIN public.setor_aplicacao sa ON sa.id = lpsa.setor_aplicacao_id WHERE gp.dgp_id = '123456' ORDER BY lp.titulo, sa.nome
+
+entities:
+  - name: grupo_pesquisa
+    label: Grupos de pesquisa
+    description: Grupos do DGP cuja instituição sede pertence ao SIMCC.
+    synonyms: [grupo, grupo de pesquisa, núcleo de pesquisa]
+    columns:
+      - name: id
+        description: Identificador interno, usado apenas em junções.
+        list_values: never
+      - name: dgp_id
+        label: Identificador DGP
+        description: Identificador do grupo no Diretório dos Grupos de Pesquisa do CNPq.
+        list_values: never
+      - name: nome
+        label: Nome
+        searchable: true
+        list_values: never
+      - name: ano_formacao
+        label: Ano de formação
+      - name: area_predominante
+        label: Área predominante
+        searchable: true
+        list_values: never
+      - name: repercussao
+        label: Repercussão
+        searchable: true
+        list_values: never
+      - name: situacao
+        label: Situação
+      - name: cidade
+        label: Cidade
+      - name: uf
+        label: Unidade federativa
+
+  - name: instituicao
+    label: Instituições sede do SIMCC
+    columns:
+      - name: id
+        description: Identificador interno, usado apenas em junções.
+        list_values: never
+      - name: nome
+        label: Nome
+        list_values: never
+      - name: sigla
+        label: Sigla
+        list_values: never
+
+  - name: grupo_pesquisa_instituicao
+    label: Vínculo do grupo com a instituição sede
+    columns:
+      - name: grupo_id
+        description: Grupo de pesquisa.
+        list_values: never
+      - name: instituicao_id
+        description: Instituição sede.
+        list_values: never
+      - name: tipo_relacao
+        label: Tipo de relação
+      - name: unidade
+        label: Unidade
+        searchable: true
+        list_values: never
+      - name: unidade_uf
+        label: UF da unidade
+        list_values: never
+
+  - name: membro_grupo
+    label: Pesquisadores dos grupos
+    description: Vínculo de um pesquisador com um grupo e indicação de liderança.
+    columns:
+      - name: pesquisador_id
+        description: Pesquisador do grupo.
+        list_values: never
+      - name: grupo_id
+        description: Grupo de pesquisa.
+        list_values: never
+      - name: e_lider
+        label: É líder
+      - name: data_entrada
+        label: Data de entrada
+
+  - name: pesquisador
+    label: Pesquisadores dos grupos SIMCC
+    columns:
+      - name: id
+        description: Identificador interno, usado apenas em junções.
+        list_values: never
+      - name: lattes_id
+        label: Identificador Lattes
+        list_values: never
+      - name: nome
+        label: Nome
+        searchable: true
+        list_values: never
+      - name: tipo
+        label: Tipo de pesquisador
+      - name: formacao_academica
+        label: Formação acadêmica
+
+  - name: linha_pesquisa
+    label: Linhas de pesquisa
+    columns:
+      - name: id
+        description: Identificador interno, usado apenas em junções.
+        list_values: never
+      - name: grupo_id
+        description: Grupo ao qual a linha pertence.
+        list_values: never
+      - name: dgp_id
+        label: Identificador DGP
+        list_values: never
+      - name: titulo
+        label: Título
+        searchable: true
+        list_values: never
+      - name: objetivo
+        label: Objetivo
+        searchable: true
+        list_values: never
+
+  - name: membro_linha_pesquisa
+    label: Pesquisadores das linhas de pesquisa
+    columns:
+      - name: linha_pesquisa_id
+        description: Linha de pesquisa.
+        list_values: never
+      - name: pesquisador_id
+        description: Pesquisador vinculado à linha.
+        list_values: never
+
+  - name: setor_aplicacao
+    label: Setores de aplicação
+    columns:
+      - name: id
+        description: Identificador interno, usado apenas em junções.
+        list_values: never
+      - name: nome
+        label: Nome
+        searchable: true
+        list_values: never
+
+  - name: linha_pesquisa_setor_aplicacao
+    label: Setores associados às linhas de pesquisa
+    columns:
+      - name: linha_pesquisa_id
+        description: Linha de pesquisa.
+        list_values: never
+      - name: setor_aplicacao_id
+        description: Setor de aplicação.
+        list_values: never
