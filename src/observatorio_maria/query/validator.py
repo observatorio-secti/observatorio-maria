@@ -208,7 +208,7 @@ def _check_stars(stmt: exp.Expression) -> None:
         )
 
 
-def _check_functions(stmt: exp.Expression) -> None:
+def _check_functions(stmt: exp.Expression, allow_case: bool = False) -> None:
     for node in stmt.walk():
         if isinstance(node, exp.Anonymous):
             f_name = node.name.lower()
@@ -217,6 +217,12 @@ def _check_functions(stmt: exp.Expression) -> None:
                     f"Função '{node.name}' não permitida"
                 )
         elif isinstance(node, exp.Func):
+            if (
+                allow_case
+                and isinstance(node, exp.If)
+                and isinstance(node.parent, exp.Case)
+            ):
+                continue
             if not isinstance(node, ALLOWED_FUNC_CLASSES):
                 f_name = (
                     node.key or node.sql_name() or type(node).__name__
@@ -290,7 +296,20 @@ def _check_aggregate_columns(
     sources: dict[str, Any],
     table_key: Callable[[exp.Table], str] = lambda table: table.name.lower(),
 ) -> None:
+    scope_sources = {}
+    if getattr(schema, 'datasource_id', None) == 'oda':
+        for scope in traverse_scope(qualified):
+            chain = []
+            current = scope
+            while current is not None:
+                chain.append(current)
+                current = current.parent
+            local_sources = {}
+            for current in reversed(chain):
+                local_sources.update(current.sources)
+            scope_sources[id(scope.expression)] = local_sources
     for select in qualified.find_all(exp.Select):
+        local_sources = scope_sources.get(id(select), sources)
         for expr in select.expressions:
             for col in expr.find_all(exp.Column):
                 if _is_inside_aggregate(col, expr):
@@ -298,7 +317,7 @@ def _check_aggregate_columns(
 
                 table_name = None
                 if col.table:
-                    src = sources.get(col.table)
+                    src = local_sources.get(col.table)
                     if isinstance(src, exp.Table):
                         table_name = table_key(src)
                     elif col.table.lower() in schema.queryable_tables:
@@ -332,7 +351,7 @@ def validate_query(sql: str, schema: QuerySchema, max_rows: int = 100) -> str:
     stmt = _check_statement(statements)
     _check_tables(stmt, schema)
     _check_stars(stmt)
-    _check_functions(stmt)
+    _check_functions(stmt, allow_case=schema.datasource_id == 'oda')
     _check_limit(stmt, max_rows)
 
     qualified = _qualify_query(stmt, schema)

@@ -29,6 +29,7 @@ from observatorio_maria.models import (
     CatalogEntity,
     ColumnAccess,
 )
+from observatorio_maria.query.errors import QueryValidationError
 from observatorio_maria.query.row_scope import apply_oda_simcc_scope
 from observatorio_maria.settings import Settings
 
@@ -117,7 +118,7 @@ async def _read_columns(
                     connection, entity, column, max_values, timeout_seconds
                 )
                 report.read_columns.append(label)
-            except (SQLAlchemyError, TimeoutError):
+            except (SQLAlchemyError, TimeoutError, QueryValidationError):
                 if entity.datasource_id == 'oda':
                     # Não reutilizar categorias antigas sem escopo SIMCC.
                     column.observed_values = None
@@ -134,8 +135,8 @@ async def refresh_observed_values(
 ) -> ObservedReport:
     """Relê os valores observados das colunas elegíveis da fonte.
 
-    Colunas não elegíveis ficam sem valores observados. Falha numa coluna
-    mantém os valores anteriores dela; falha de conexão mantém todos.
+    Colunas não elegíveis ficam sem valores observados. Na fonte ODA,
+    falhas descartam valores antigos; nas demais fontes eles são mantidos.
     """
     settings = Settings()
     max_values = max_values or settings.CATALOG_OBSERVED_VALUES_MAX
@@ -170,6 +171,9 @@ async def refresh_observed_values(
             )
 
     if report.error or report.failed_columns:
+        if datasource.id == 'oda' and report.error:
+            for _, column in eligible:
+                column.observed_values = None
         logger.warning(
             'Valores observados da fonte %s incompletos: %s',
             datasource.id,

@@ -159,6 +159,8 @@ curl -X POST http://localhost:11309/catalog/datasources/oda/sync
 
 A sincronização do Simcc também lê os valores das colunas categóricas (`SELECT DISTINCT` somente leitura) e pode levar mais tempo que a do fomento, porque as tabelas de produção são maiores. A sincronização do ODA inspeciona o schema e os valores do catálogo; não cria nem altera objetos ou dados no banco ODA.
 
+Na inicialização pelo Compose, `entrypoint.sh` aplica as migrations do banco interno, carrega os seeds de Fomento, Simcc e ODA e sincroniza as fontes. A criação do catálogo ODA é automática em instalações novas. O script entrypoint.sh deve usar finais de linha LF; .gitattributes preserva esse formato nos checkouts Windows e Linux. Esse fluxo não altera o PostgreSQL ODA e não sobrescreve instruções/exemplos já cadastrados.
+
 ### Atualizar um catálogo que já existe
 
 Para atualizar a integração ODA, reconstrua e recrie `maria-api` com o código atual. Reiniciar o container antigo não atualiza os arquivos da imagem. A alteração do código é independente dos dados persistidos em `maria_data`.

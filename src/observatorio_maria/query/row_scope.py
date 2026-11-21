@@ -59,20 +59,13 @@ def _eligible_line(alias: str) -> str:
     )
 
 
-def _policy(table_name: str) -> str | None:  # noqa: PLR0911
+def _policy(table_name: str) -> str | None:
     group = _eligible_group('scope_group')
-    if table_name == 'instituicao':
-        return _institution_filter('_scope')
-    if table_name == 'grupo_pesquisa':
-        return _eligible_group('_scope')
-    if table_name == 'grupo_pesquisa_instituicao':
-        return (
-            "_scope.tipo_relacao = 'sede' AND "
     policies = {
         'instituicao': _institution_filter('_scope'),
         'grupo_pesquisa': _eligible_group('_scope'),
         'grupo_pesquisa_instituicao': (
-            "_scope.tipo_relacao = 'SEDE' AND "
+            "_scope.tipo_relacao = 'sede' AND "
             '_scope.instituicao_id IN ('
             'SELECT scope_inst.id FROM public.instituicao AS scope_inst '
             f'WHERE {_institution_filter("scope_inst")})'

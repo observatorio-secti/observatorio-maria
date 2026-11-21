@@ -28,3 +28,11 @@ Não há migração nem escrita no banco do ODA. A atualização do catálogo lo
 - Bloquear consultas ODA federadas antes de qualquer conexão. Alternativa descartada: liberar ligações sem uma política equivalente no executor DuckDB.
 - Filtrar categorias observadas pelo mesmo escopo e descartar valores antigos em falha. Alternativa descartada: manter categorias sem garantia de pertencerem ao recorte.
 - Apresentar pesquisadores ODA como tabela do resultado. Alternativa descartada: hidratar no Simcc usando UUIDs de outra base.
+
+## Regressões após o merge
+- Manter uma única implementação válida de `_policy` com os rótulos físicos do banco. A mistura de versões no merge causou SyntaxError e reintroduziu `SEDE`.
+- Resolver a restrição de agregação por escopo ODA. Alternativa descartada: mapa global de aliases, que confundia tabelas de subconsultas com tabelas externas.
+- Resolver a origem por posição em todos os ramos UNION. Alternativa descartada: usar só o ramo esquerdo, que poderia ignorar uma origem não pesquisável.
+- Validar enums em COALESCE/CASE sem converter literais indiscriminadamente. Alternativa descartada: rejeitar comparações de valores explicitamente convertidos para texto.
+- Descartar categorias ODA quando a conexão falhar antes da leitura. Alternativa descartada: manter valores antigos cuja aplicação do escopo não está garantida.
+- Incluir ODA no seed do entrypoint. Alternativa descartada: exigir cadastro manual em cada instalação nova.

@@ -12,3 +12,13 @@
 - [x] Aplicar escopo às categorias observadas e apresentar pesquisadores sem consultar Simcc.
 - [x] Cobrir o recorte e os erros reproduzidos com SQLite isolado; 93 testes de regressão e 19 subtestes aprovados na primeira rodada.
 - [ ] Recriar o container de produção com a imagem corrigida e sincronizar novamente o catálogo.
+
+## Correções após o merge
+- [x] Reparar a sintaxe de `_policy`, preservar a implementação por dicionário e o enum físico `sede`.
+- [x] Resolver aliases por escopo ODA na proteção de colunas somente para agregação.
+- [x] Validar busca em todos os ramos UNION, incluindo a recusa de expressões sem origem pesquisável garantida.
+- [x] Validar enums em COALESCE e CASE e aceitar CASE válido na fonte ODA.
+- [x] Limpar categorias ODA quando a conexão falha antes da leitura, preservando o comportamento das demais fontes.
+- [x] Incluir o seed ODA no entrypoint e preservar LF pelo Git.
+- [x] Executar lint completo, conferir sintaxe do shell e rodar a suíte completa em container isolado: 652 testes aprovados e 91% de cobertura.
+- [x] Atualizar README, guia de deploy e especificações correspondentes.

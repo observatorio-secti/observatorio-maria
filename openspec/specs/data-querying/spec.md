@@ -410,3 +410,30 @@ Consultas ODA SHALL usar o critério institucional da API ODA, preservar aliases
 #### Scenario: Apresentação de pesquisadores ODA
 - **WHEN** show_researchers recebe resultado ODA
 - **THEN** a apresentação usa os dados já consultados em tabela, sem abrir conexão Simcc
+
+
+### Requirement: Validação ODA por escopo e expressão
+A fonte ODA MUST preservar restrições de agregação com aliases repetidos e projeções renomeadas. MATCH_TEXT em UNION SHALL exigir todas as origens pesquisáveis. Literais de enum em COALESCE e CASE MUST ser conferidos. Falha de conexão MUST descartar categorias ODA antigas.
+
+#### Scenario: Alias repetido em subconsulta
+- **WHEN** a consulta tenta exibir coluna de agregação por subconsulta com alias repetido e coluna renomeada
+- **THEN** a consulta é recusada antes da execução
+
+#### Scenario: Busca em UNION
+- **WHEN** MATCH_TEXT consulta uma coluna derivada de UNION
+- **THEN** a busca é aceita somente quando todas as origens são pesquisáveis
+
+#### Scenario: Enum em expressão
+- **WHEN** COALESCE ou CASE contém literal incompatível com o enum ODA
+- **THEN** a consulta é recusada com os valores aceitos; CASE válido permanece permitido
+
+#### Scenario: Conexão indisponível
+- **WHEN** a fonte ODA falha antes de ler categorias
+- **THEN** valores observados antigos são descartados; o comportamento das demais fontes é preservado
+
+### Requirement: Seed ODA na inicialização
+A inicialização de produção SHALL incluir catalog/oda.yaml entre os seeds, criando a fonte ausente sem sobrescrever configurações existentes.
+
+#### Scenario: Instalação nova
+- **WHEN** o entrypoint inicializa um catálogo sem fonte ODA
+- **THEN** o seed ODA é executado antes da sincronização

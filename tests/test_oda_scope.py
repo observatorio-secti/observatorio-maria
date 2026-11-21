@@ -1,18 +1,21 @@
 """Regressões ODA com origem SQLite isolada, sem LLM ou banco externo."""
 
 import asyncio
+import os
+import shlex
 import sqlite3
 import unittest
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import sqlglot
 from sqlalchemy.dialects.sqlite import dialect as sqlite_dialect
 
+from observatorio_maria.catalog import observed
 from observatorio_maria.catalog.observed import _read_distinct  # noqa: PLC2701
 from observatorio_maria.catalog.yaml_io import load_catalog_file
 from observatorio_maria.models import (
@@ -275,3 +278,127 @@ class OdaScopeTests(unittest.TestCase):
         assert block['type'] == 'table'
         assert block['rows'][0]['nome'] == 'Pessoa do grupo'
         assert 'id' not in block['rows'][0]
+
+    def test_aggregate_only_projection_cannot_escape_via_reused_alias(self):
+        schema = replace(
+            self.schema,
+            aggregate_columns={
+                ('grupo_pesquisa', 'nome'),
+                ('public.grupo_pesquisa', 'nome'),
+            },
+        )
+        for sql in (
+            'SELECT p.nome FROM public.grupo_pesquisa p',
+            'SELECT x.valor FROM '
+            '(SELECT p.nome AS valor FROM public.grupo_pesquisa p) x '
+            "JOIN public.pesquisador p ON p.id='p1'",
+        ):
+            with self.subTest(sql=sql):
+                with pytest.raises(QueryValidationError, match='agregação'):
+                    validate_query(sql, schema)
+        # A proteção não deve impedir agregações válidas.
+        validate_query('SELECT COUNT(nome) FROM public.grupo_pesquisa', schema)
+
+    def test_union_search_preserves_scoping_of_both_branches(self):
+        rows = self.query(
+            'WITH x AS (SELECT nome FROM public.grupo_pesquisa '
+            'UNION SELECT nome FROM public.grupo_pesquisa) '
+            "SELECT x.nome FROM x WHERE MATCH_TEXT(x.nome, 'npai', 'fora')"
+        )
+        assert rows == [('NPAI',)]
+
+    def test_union_cannot_search_a_non_searchable_branch(self):
+        for projection in ('id', 'CAST(id AS TEXT)'):
+            with self.subTest(projection=projection):
+                sql = (
+                    'WITH x AS (SELECT nome FROM public.grupo_pesquisa '
+                    f'UNION SELECT {projection} FROM public.pesquisador) '
+                    "SELECT x.nome FROM x WHERE MATCH_TEXT(x.nome,'p1')"
+                )
+                with pytest.raises(
+                    QueryValidationError, match='busca textual'
+                ):
+                    validate_query(sql, self.schema)
+
+    def test_coalesce_and_case_reject_invalid_enum_labels(self):
+        for sql in (
+            "SELECT COALESCE(situacao,'CERTIFICADO') "
+            'FROM public.grupo_pesquisa',
+            "SELECT CASE situacao WHEN 'CERTIFICADO' THEN 1 ELSE 0 END "
+            'FROM public.grupo_pesquisa',
+            "SELECT CASE WHEN id='g1' THEN situacao ELSE 'CERTIFICADO' END "
+            'FROM public.grupo_pesquisa',
+        ):
+            with self.subTest(sql=sql):
+                with pytest.raises(
+                    QueryValidationError, match='Valores aceitos'
+                ):
+                    validate_query(sql, self.schema)
+
+    def test_valid_case_and_coalesce_and_explicit_text_cast(self):
+        assert self.query(
+            "SELECT COUNT(CASE WHEN situacao='certificado' THEN id END) "
+            'FROM public.grupo_pesquisa'
+        ) == [(3,)]
+        assert self.query(
+            "SELECT COALESCE(situacao,'certificado') "
+            "FROM public.grupo_pesquisa WHERE id='g1'"
+        ) == [('certificado',)]
+        # A comparação é textual: o literal não precisa ser um rótulo enum.
+        validate_query(
+            'SELECT id FROM public.grupo_pesquisa '
+            "WHERE CAST(situacao AS TEXT)='CERTIFICADO'",
+            self.schema,
+        )
+
+    def test_connection_failure_clears_only_oda_observed_values(self):
+        entity = next(e for e in self.entities if e.name == 'grupo_pesquisa')
+        column = next(c for c in entity.columns if c.name == 'nome')
+        column.data_type = 'TEXT'
+
+        def unavailable(url):
+            raise OSError('conexão simulada indisponível')
+
+        for source_id in ('oda', 'other'):
+            column.observed_values = ['categoria antiga']
+            source = CatalogDataSource(
+                id=source_id,
+                name='Origem',
+                connection_env='AUDIT_DATABASE_URL',
+            )
+            with (
+                patch.object(
+                    observed, 'load_entities', AsyncMock(return_value=[entity])
+                ),
+                patch.dict(
+                    os.environ,
+                    {
+                        'AUDIT_DATABASE_URL': 'postgresql+psycopg://localhost/unused'
+                    },
+                ),
+            ):
+                report = asyncio.run(
+                    observed.refresh_observed_values(
+                        AsyncMock(), source, engine_factory=unavailable
+                    )
+                )
+            assert report.error is not None
+            assert (column.observed_values is None) == (source_id == 'oda')
+
+    @staticmethod
+    def test_startup_seed_includes_oda():
+        assert b'\r\n' not in Path('entrypoint.sh').read_bytes()
+        script = (
+            Path('entrypoint.sh')
+            .read_text(encoding='utf-8')
+            .replace('\\\n', '')
+        )
+        command = next(
+            line
+            for line in script.splitlines()
+            if 'python -m observatorio_maria.catalog.seed ' in line
+        )
+        files = shlex.split(command)[3:]
+        assert 'catalog/oda.yaml' in files
+        for filename in files:
+            assert Path(filename).is_file()
